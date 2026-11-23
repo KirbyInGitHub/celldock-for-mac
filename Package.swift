@@ -18,10 +18,7 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4")
     ],
     targets: [
-        .executableTarget(
-            name: "CellDockCLI",
-            linkerSettings: [.linkedFramework("Security")]
-        ),
+        .executableTarget(name: "CellDockCLI"),
         .target(
             name: "CModemBridge",
             dependencies: [],

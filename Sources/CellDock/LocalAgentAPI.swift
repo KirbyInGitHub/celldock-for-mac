@@ -324,3 +324,33 @@ final class LocalAgentIdempotencyStore {
         entries[request.requestID] = .done(fingerprint: fingerprint, result: result)
     }
 }
+
+/// Hands the local API token to the `celldock` CLI the way DJOneHub does: a
+/// 0600 file in the user's Application Support folder, present only while
+/// the API is running. The CLI reads it, so neither the user nor an agent
+/// ever copies the token.
+enum LocalAgentCLIAccessFile {
+    static var url: URL {
+        AppDataDirectory.userApplicationSupport().appendingPathComponent("cli-access.json")
+    }
+
+    static func write(token: String, endpoint: String) {
+        let fileManager = FileManager.default
+        let destination = url
+        try? fileManager.createDirectory(at: destination.deletingLastPathComponent(),
+                                         withIntermediateDirectories: true)
+        let body: [String: Any] = ["version": 1, "endpoint": endpoint, "token": token]
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return }
+        let temporary = destination.deletingLastPathComponent()
+            .appendingPathComponent(".cli-access.\(UUID().uuidString).json")
+        guard fileManager.createFile(atPath: temporary.path, contents: data,
+                                     attributes: [.posixPermissions: 0o600]) else { return }
+        if rename(temporary.path, destination.path) != 0 {
+            try? fileManager.removeItem(at: temporary)
+        }
+    }
+
+    static func remove() {
+        try? FileManager.default.removeItem(at: url)
+    }
+}

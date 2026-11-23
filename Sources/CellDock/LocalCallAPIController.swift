@@ -30,6 +30,7 @@ final class LocalCallAPIController: ObservableObject {
         do {
             let token = try LocalCallAPICredentialStore.loadOrCreate()
             self.token = token
+            LocalAgentCLIAccessFile.write(token: token, endpoint: Self.endpoint)
             let generation = UUID()
             self.generation = generation
             let server = LocalCallAPIServer(token: token) { [weak self] command, completion in
@@ -78,6 +79,7 @@ final class LocalCallAPIController: ObservableObject {
     }
 
     func stop() {
+        LocalAgentCLIAccessFile.remove()
         generation = nil
         server?.stop()
         server = nil

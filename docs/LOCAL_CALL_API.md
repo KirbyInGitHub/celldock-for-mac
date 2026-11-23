@@ -186,5 +186,7 @@ celldock sms send --to +8613800000000 --message hi --request-id demo-0001 --dry-
 celldock skill install    # writes ~/.claude/skills/celldock/SKILL.md
 ```
 
-The CLI reads the token from `CELLDOCK_API_TOKEN` or from the Keychain item the
-app creates; macOS asks once before allowing it.
+While the API runs, CellDock writes the token to
+`~/Library/Application Support/CellDock/cli-access.json` (mode 0600, removed
+when the API stops) and the CLI reads it from there, so nobody copies the
+token. `CELLDOCK_API_TOKEN` overrides it.

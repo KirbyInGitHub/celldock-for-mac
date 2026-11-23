@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 // `celldock`: JSON command line for the CellDock local API.
 // Talks only to http://127.0.0.1:7576 with the local API bearer token; every
@@ -74,24 +73,30 @@ struct Arguments {
 
 // MARK: - Token and HTTP
 
+/// The 0600 file CellDock writes while its local API runs.
+func accessFileToken() throws -> String? {
+    let path = ProcessInfo.processInfo.environment["CELLDOCK_CLI_CONFIG"]
+        ?? (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/CellDock/cli-access.json")
+    var info = stat()
+    guard lstat(path, &info) == 0 else { return nil }
+    guard (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == getuid(), (info.st_mode & 0o077) == 0 else {
+        throw CLIError(message: "\(path) must be a regular file owned by you with mode 0600")
+    }
+    guard let data = FileManager.default.contents(atPath: path),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          object["version"] as? Int == 1,
+          let token = object["token"] as? String, token.count >= 32 else {
+        throw CLIError(message: "\(path) is incomplete or unsupported")
+    }
+    return token
+}
+
 func loadToken() throws -> String {
     if let token = ProcessInfo.processInfo.environment["CELLDOCK_API_TOKEN"], !token.isEmpty {
         return token
     }
-    let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "app.celldock.mac.local-call-api",
-        kSecAttrAccount as String: "bearer-token",
-        kSecReturnData as String: true,
-        kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
-    var item: CFTypeRef?
-    let status = SecItemCopyMatching(query as CFDictionary, &item)
-    guard status == errSecSuccess, let data = item as? Data,
-          let token = String(data: data, encoding: .utf8), !token.isEmpty else {
-        throw CLIError(message: "No local API token. Enable CellDock Settings → Local call API, or set CELLDOCK_API_TOKEN.")
-    }
-    return token
+    if let token = try accessFileToken() { return token }
+    throw CLIError(message: "CellDock is not running, or its Local call API is off (Settings → Cellular & Communications).")
 }
 
 func request(_ method: String, _ path: String, body: [String: Any]? = nil,

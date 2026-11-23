@@ -8,7 +8,7 @@ description: Use the CellDock `celldock` CLI to check cellular modules (SIM, sig
 
 # CellDock CLI
 
-Use only the `celldock` CLI. Do not read the API token, call the local API with
+Use only the `celldock` CLI. Do not read the API token or `cli-access.json`, call the local API with
 curl, or open the module's serial ports with other tools. CellDock enforces
 every permission; this skill grants none.
 
