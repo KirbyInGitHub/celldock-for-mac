@@ -132,7 +132,7 @@ DEPLOYMENT_TARGET="$(plutil -extract LSMinimumSystemVersion raw "$ROOT/Resources
   print -u2 "Resources/Info.plist LSMinimumSystemVersion ($DEPLOYMENT_TARGET) does not match the macOS 14 package platform."
   exit 1
 }
-MACOS_SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+MACOS_SDK_VERSION="${CELLDOCK_PREBUILT_SDK_VERSION:-$(xcrun --sdk macosx --show-sdk-version)}"
 [[ "$MACOS_SDK_VERSION" == <->.<->(|.<->) ]] || {
   print -u2 "Could not determine the installed macOS SDK version: $MACOS_SDK_VERSION"
   exit 1
