@@ -12,7 +12,7 @@ let package = Package(
         .executable(name: "CellDockNetworkHelper", targets: ["CellDockNetworkHelper"]),
         .executable(name: "CellDockDialProbe", targets: ["CellDockDialProbe"]),
         .executable(name: "CellDockSMSDeleteProbe", targets: ["CellDockSMSDeleteProbe"]),
-        .executable(name: "celldock", targets: ["CellDockCLI"])
+        .executable(name: "celldock-cli", targets: ["CellDockCLI"])
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4")

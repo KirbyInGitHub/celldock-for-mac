@@ -143,15 +143,22 @@ LINKER_PLATFORM_OPTIONS=(
   -Xlinker "$DEPLOYMENT_TARGET"
   -Xlinker "$MACOS_SDK_VERSION"
 )
-swift build --disable-sandbox -Xswiftc -disable-sandbox \
-  -c release \
-  "${BUILD_ARCH_OPTIONS[@]}" \
-  "${LINKER_PLATFORM_OPTIONS[@]}"
-BIN_DIR="$(swift build --disable-sandbox -Xswiftc -disable-sandbox \
-  -c release \
-  "${BUILD_ARCH_OPTIONS[@]}" \
-  "${LINKER_PLATFORM_OPTIONS[@]}" \
-  --show-bin-path)"
+if [[ -n "${CELLDOCK_PREBUILT_BIN_DIR:-}" ]]; then
+  # Binaries built on another Mac (for example one whose SDK the local
+  # toolchain cannot build against). Sparkle comes from the same build.
+  BIN_DIR="$CELLDOCK_PREBUILT_BIN_DIR"
+  SPARKLE_FRAMEWORK_SOURCE="${CELLDOCK_PREBUILT_SPARKLE:-$BIN_DIR/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework}"
+else
+  swift build --disable-sandbox -Xswiftc -disable-sandbox \
+    -c release \
+    "${BUILD_ARCH_OPTIONS[@]}" \
+    "${LINKER_PLATFORM_OPTIONS[@]}"
+  BIN_DIR="$(swift build --disable-sandbox -Xswiftc -disable-sandbox \
+    -c release \
+    "${BUILD_ARCH_OPTIONS[@]}" \
+    "${LINKER_PLATFORM_OPTIONS[@]}" \
+    --show-bin-path)"
+fi
 
 mkdir -p "$OUTPUT_DIR"
 mkdir -p \
@@ -177,7 +184,7 @@ if [[ -d "$ROOT/Resources/ModuleVoice" ]]; then
 fi
 cp "$BIN_DIR/CellDock" "$STAGE_APP/Contents/MacOS/CellDock"
 cp "$BIN_DIR/CellDockNetworkHelper" "$STAGE_APP/$HELPER_RELATIVE"
-cp "$BIN_DIR/celldock" "$STAGE_APP/Contents/MacOS/celldock"
+cp "$BIN_DIR/celldock-cli" "$STAGE_APP/Contents/MacOS/celldock-cli"
 VOWIFI_GO_ROOT="$ROOT/ThirdParty/vowifi-go"
 [[ -f "$VOWIFI_GO_ROOT/go.mod" && -d "$VOWIFI_GO_ROOT/vendor" ]] || {
   print -u2 "Vendored vowifi-go runtime source is missing."
@@ -254,7 +261,7 @@ codesign \
   --sign "$SIGN_IDENTITY" \
   "${CODESIGN_OPTIONS[@]}" \
   --identifier app.celldock.mac.cli \
-  "$STAGE_APP/Contents/MacOS/celldock"
+  "$STAGE_APP/Contents/MacOS/celldock-cli"
 codesign \
   --force \
   --sign "$SIGN_IDENTITY" \

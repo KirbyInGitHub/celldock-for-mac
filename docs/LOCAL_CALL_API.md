@@ -175,10 +175,10 @@ returns the first result with `replayed: true` instead of sending again; the
 same id with a different message is rejected. Ids are kept in memory until
 CellDock quits.
 
-The app bundle ships a JSON CLI at `CellDock.app/Contents/MacOS/celldock`:
+The app bundle ships a JSON CLI at `CellDock.app/Contents/MacOS/celldock-cli` (link it as `celldock`):
 
 ```sh
-ln -sf /Applications/CellDock.app/Contents/MacOS/celldock /usr/local/bin/celldock
+ln -sf /Applications/CellDock.app/Contents/MacOS/celldock-cli /usr/local/bin/celldock
 celldock modules
 celldock sms list --limit 20
 celldock at 'AT+CEREG?'
