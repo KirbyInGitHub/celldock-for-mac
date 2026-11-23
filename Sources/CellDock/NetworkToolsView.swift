@@ -3,6 +3,8 @@ import SwiftUI
 enum NetworkToolsTab: String {
     case proxy
     case voWiFi = "wifiCalling"
+    case location
+    case diagnostics
 }
 
 struct NetworkToolsTabBar: View {
@@ -12,7 +14,9 @@ struct NetworkToolsTabBar: View {
         CommunicationGlassTabs(
             items: [
                 (NetworkToolsTab.proxy, "代理"),
-                (NetworkToolsTab.voWiFi, "VoWiFi")
+                (NetworkToolsTab.voWiFi, "VoWiFi"),
+                (NetworkToolsTab.location, "定位"),
+                (NetworkToolsTab.diagnostics, "诊断")
             ],
             selection: $selection
         )
@@ -43,6 +47,20 @@ struct NetworkToolsView: View {
         case .voWiFi:
             VoWiFiView(
                 controller: voWiFiController,
+                sidebarWidth: $sidebarWidth,
+                networkToolsTab: selection
+            )
+            .environmentObject(appState)
+        case .diagnostics:
+            NetworkDiagnosticsView(
+                controller: appState.networkDiagnosticsController,
+                sidebarWidth: $sidebarWidth,
+                networkToolsTab: selection
+            )
+            .environmentObject(appState)
+        case .location:
+            GNSSView(
+                controller: appState.gnssController,
                 sidebarWidth: $sidebarWidth,
                 networkToolsTab: selection
             )

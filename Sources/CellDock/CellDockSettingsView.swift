@@ -975,8 +975,36 @@ private struct LocalCallAPISettingsView: View {
                     ProgressView().controlSize(.small)
                 }
                 LocalAgentAPIScopeSettingsView()
+                LocalAgentAPIRemoteSettingsView(controller: controller)
             }
         }
+    }
+}
+
+/// Optional second listener on this Mac's Tailscale address.
+private struct LocalAgentAPIRemoteSettingsView: View {
+    @ObservedObject var controller: LocalCallAPIController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(L10n.tr("允许通过 Tailscale 远程访问"), isOn: Binding(
+                get: { controller.isRemoteEnabled },
+                set: { controller.setRemoteEnabled($0) }
+            ))
+            .toggleStyle(.checkbox)
+            if let endpoint = controller.remoteEndpoint {
+                Text(verbatim: endpoint)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+            }
+            if let error = controller.remoteError {
+                Text(verbatim: error).font(.caption).foregroundStyle(.red)
+            }
+            Text(L10n.tr("只接受 Tailscale 网络里的设备，流量由 Tailscale 加密；令牌和上面的权限同样适用。其他电脑用 celldock --endpoint 加令牌访问。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
     }
 }
 

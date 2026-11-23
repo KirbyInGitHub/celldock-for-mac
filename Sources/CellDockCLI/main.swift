@@ -4,7 +4,10 @@ import Foundation
 // Talks only to http://127.0.0.1:7576 with the local API bearer token; every
 // capability is still checked by CellDock against the scopes in Settings.
 
-let endpoint = "http://127.0.0.1:7576"
+let localEndpoint = "http://127.0.0.1:7576"
+/// --endpoint or CELLDOCK_ENDPOINT reaches CellDock on another Mac over
+/// Tailscale; the token then comes from CELLDOCK_API_TOKEN.
+nonisolated(unsafe) var endpoint = ProcessInfo.processInfo.environment["CELLDOCK_ENDPOINT"] ?? localEndpoint
 let version = "1.0.0"
 
 struct CLIError: Error {
@@ -47,7 +50,7 @@ struct Arguments {
 
     init(_ raw: [String]) throws {
         let valueOptions: Set<String> = ["--to", "--message", "--message-file", "--request-id",
-                                         "--module", "--limit", "--id", "--number", "--dir"]
+                                         "--module", "--limit", "--id", "--number", "--dir", "--days", "--endpoint"]
         var index = 0
         while index < raw.count {
             let item = raw[index]
@@ -95,7 +98,10 @@ func loadToken() throws -> String {
     if let token = ProcessInfo.processInfo.environment["CELLDOCK_API_TOKEN"], !token.isEmpty {
         return token
     }
-    if let token = try accessFileToken() { return token }
+    if endpoint == localEndpoint, let token = try accessFileToken() { return token }
+    if endpoint != localEndpoint {
+        throw CLIError(message: "Set CELLDOCK_API_TOKEN to the remote CellDock's API token.")
+    }
     throw CLIError(message: "CellDock is not running, or its Local call API is off (Settings → Cellular & Communications).")
 }
 
@@ -184,7 +190,13 @@ celldock \(version) — JSON CLI for CellDock (local API at \(endpoint))
                     --request-id ID [--module ID] (--dry-run | --yes)
   celldock at "AT+CSQ" [--module ID]       queries (ending in ?) run directly
   celldock at "AT+CFUN=1,1" (--dry-run | --yes)
+  celldock gnss                            GNSS state and last fix (WGS-84)
+  celldock gnss on|off [--module ID] (--dry-run | --yes)
+  celldock traffic [--days N]              daily cellular data per module
+  celldock diagnose [--module ID]          radio, PDP and connectivity checks
   celldock call status
+  --endpoint http://100.x.y.z:7576         another Mac's CellDock over Tailscale
+                                           (needs CELLDOCK_API_TOKEN)
   celldock call dial --number NUMBER (--dry-run | --yes)
   celldock call answer (--dry-run | --yes)
   celldock call hangup
@@ -206,6 +218,7 @@ if raw.first == "--version" || raw.first == "version" {
 
 let args: Arguments
 do { args = try Arguments(raw) } catch let error as CLIError { fail("usage", error) } catch { exit(2) }
+if let value = args.options["--endpoint"] { endpoint = value.hasSuffix("/") ? String(value.dropLast()) : value }
 let group = args.positional.first ?? ""
 let action = args.positional.dropFirst().first ?? ""
 let name = action.isEmpty ? group : "\(group).\(action)"
@@ -257,6 +270,23 @@ do {
                                                "note": "Non-query AT commands may change the module or SIM."])
         }
         succeed("at", try request("POST", "/api/at", body: body, timeout: 200))
+
+    case ("gnss", ""), ("gnss", "status"):
+        succeed("gnss", try request("GET", "/api/gnss"))
+
+    case ("gnss", "on"), ("gnss", "off"):
+        var body: [String: Any] = ["enabled": action == "on"]
+        if let module = args.options["--module"] { body["module"] = module }
+        confirmMutation(name, args, plan: ["method": "POST", "path": "/api/gnss", "body": body])
+        succeed(name, try request("POST", "/api/gnss", body: body, timeout: 30))
+
+    case ("traffic", _):
+        succeed("traffic", try request("GET", "/api/traffic" + query([("days", args.options["--days"])])))
+
+    case ("diagnose", _):
+        var body: [String: Any] = [:]
+        if let module = args.options["--module"] { body["module"] = module }
+        succeed("diagnose", try request("POST", "/api/diagnostics", body: body, timeout: 90))
 
     case ("call", "status"):
         succeed(name, try request("GET", "/api/calls/status"))

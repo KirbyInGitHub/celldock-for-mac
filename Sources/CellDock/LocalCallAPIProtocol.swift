@@ -40,6 +40,10 @@ enum LocalCallAPICommand: Equatable {
     case messages(LocalAgentMessageQuery)
     case sendSMS(LocalAgentSMSRequest)
     case at(LocalAgentATRequest)
+    case gnss
+    case setGNSS(enabled: Bool, moduleID: String?)
+    case traffic(days: Int)
+    case diagnose(moduleID: String?)
 }
 
 struct LocalCallAPIResponse {
@@ -76,7 +80,8 @@ enum LocalCallAPIProtocol {
     static let headerLimit = 8192
     static let bodyLimit = 4096
 
-    static func decode(_ data: Data, token: String, port: UInt16) throws -> LocalCallAPICommand? {
+    static func decode(_ data: Data, token: String, port: UInt16,
+                       host: String = "127.0.0.1") throws -> LocalCallAPICommand? {
         func fail(_ status: Int, _ message: String) throws -> Never {
             throw LocalCallAPIHTTPError(status: status, message: message)
         }
@@ -99,7 +104,7 @@ enum LocalCallAPIProtocol {
                   headers[name] == nil else { try fail(400, "Invalid or duplicate header") }
             headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        guard headers["host"] == "127.0.0.1:\(port)" else { try fail(403, "Invalid Host") }
+        guard headers["host"] == "\(host):\(port)" else { try fail(403, "Invalid Host") }
         guard headers["origin"] == nil else { try fail(403, "Browser origins are not supported") }
         guard !token.isEmpty, headers["authorization"] == "Bearer \(token)" else {
             try fail(401, "Bearer token required")
@@ -122,20 +127,30 @@ enum LocalCallAPIProtocol {
         let target = first[1]
         let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? target
         let query = LocalAgentAPIRoutes.queryItems(target)
-        let getRoutes = ["/api/calls/status", "/api/modules", "/api/sms"]
+        let getRoutes = ["/api/calls/status", "/api/modules", "/api/sms", "/api/gnss", "/api/traffic"]
         let postRoutes = ["/api/calls/dial", "/api/calls/answer", "/api/calls/hangup",
-                          "/api/sms/send", "/api/at"]
+                          "/api/sms/send", "/api/at", "/api/gnss", "/api/diagnostics"]
         guard getRoutes.contains(path) || postRoutes.contains(path) else { try fail(404, "Unknown endpoint") }
-        guard first[0] == (getRoutes.contains(path) ? "GET" : "POST") else {
+        // Only the list endpoints take a query string.
+        guard target == path || ["/api/sms", "/api/traffic"].contains(path) else {
+            try fail(404, "Unknown endpoint")
+        }
+        let isGET = first[0] == "GET"
+        guard (isGET && getRoutes.contains(path)) || (first[0] == "POST" && postRoutes.contains(path)) else {
             try fail(405, "Method not allowed")
         }
-        if getRoutes.contains(path) {
+        if isGET {
             guard length == 0 else { try fail(400, "Unexpected body") }
             switch path {
             case "/api/modules": return .modules
             case "/api/sms":
                 do { return .messages(try LocalAgentMessageQuery(query: query)) }
                 catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
+            case "/api/gnss": return .gnss
+            case "/api/traffic":
+                let days = query["days"].flatMap(Int.init) ?? 30
+                guard (1...400).contains(days) else { try fail(400, "days must be 1...400") }
+                return .traffic(days: days)
             default: return .status
             }
         }
@@ -156,6 +171,16 @@ enum LocalCallAPIProtocol {
             catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
         case "/api/at":
             do { return .at(try LocalAgentATRequest(body: body)) }
+            catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
+        case "/api/gnss":
+            guard Set(body.keys).isSubset(of: ["enabled", "module"]), let enabled = body["enabled"] as? Bool else {
+                try fail(400, "Expected {\"enabled\": true|false, \"module\"?}")
+            }
+            do { return .setGNSS(enabled: enabled, moduleID: try LocalAgentAPIRoutes.moduleID(body["module"])) }
+            catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
+        case "/api/diagnostics":
+            guard Set(body.keys).isSubset(of: ["module"]) else { try fail(400, "Allowed keys: module") }
+            do { return .diagnose(moduleID: try LocalAgentAPIRoutes.moduleID(body["module"])) }
             catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
         default:
             guard body.isEmpty else { try fail(400, "Expected an empty JSON object") }

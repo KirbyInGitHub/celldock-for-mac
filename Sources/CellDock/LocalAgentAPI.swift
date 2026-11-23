@@ -7,163 +7,6 @@ import Foundation
 // each capability is additionally gated by a scope the user turns on in
 // Settings, so enabling the call API alone grants nothing new.
 
-struct LocalAgentAPIRequestError: Error {
-    let message: String
-}
-
-enum LocalAgentAPIScope: String, CaseIterable, Identifiable {
-    case modulesRead = "modules.read"
-    case smsRead = "sms.read"
-    case smsSend = "sms.send"
-    case atRead = "at.read"
-    case atWrite = "at.write"
-
-    var id: String { rawValue }
-
-    private var defaultsKey: String { "LocalAgentAPIScope.\(rawValue).v1" }
-
-    /// Reads default on, actions default off.
-    var isEnabled: Bool {
-        get {
-            let defaults = UserDefaults.standard
-            guard defaults.object(forKey: defaultsKey) != nil else {
-                return self == .modulesRead || self == .smsRead || self == .atRead
-            }
-            return defaults.bool(forKey: defaultsKey)
-        }
-        nonmutating set { UserDefaults.standard.set(newValue, forKey: defaultsKey) }
-    }
-
-    var title: String {
-        switch self {
-        case .modulesRead: return L10n.tr("读取模组与网络状态")
-        case .smsRead: return L10n.tr("读取短信")
-        case .smsSend: return L10n.tr("发送短信")
-        case .atRead: return L10n.tr("执行只读 AT 查询")
-        case .atWrite: return L10n.tr("执行会修改模组的 AT 命令")
-        }
-    }
-}
-
-enum LocalAgentAPIRoutes {
-    static func queryItems(_ target: String) -> [String: String] {
-        guard let components = URLComponents(string: "http://127.0.0.1" + target) else { return [:] }
-        var result: [String: String] = [:]
-        for item in components.queryItems ?? [] where result[item.name] == nil {
-            result[item.name] = item.value ?? ""
-        }
-        return result
-    }
-
-    static func moduleID(_ value: Any?) throws -> String? {
-        guard let value else { return nil }
-        guard let string = value as? String, !string.isEmpty, string.count <= 128 else {
-            throw LocalAgentAPIRequestError(message: "module must be a non-empty string")
-        }
-        return string
-    }
-}
-
-struct LocalAgentMessageQuery: Equatable {
-    var limit = 20
-    var moduleID: String?
-    var id: String?
-    var unreadOnly = false
-
-    init(query: [String: String]) throws {
-        let allowed: Set<String> = ["limit", "module", "id", "unread"]
-        guard Set(query.keys).isSubset(of: allowed) else {
-            throw LocalAgentAPIRequestError(message: "Unknown query parameter; allowed: limit, module, id, unread")
-        }
-        if let raw = query["limit"] {
-            guard let value = Int(raw), (1...500).contains(value) else {
-                throw LocalAgentAPIRequestError(message: "limit must be 1...500")
-            }
-            limit = value
-        }
-        moduleID = try LocalAgentAPIRoutes.moduleID(query["module"])
-        id = query["id"].flatMap { $0.isEmpty ? nil : $0 }
-        unreadOnly = query["unread"] == "1" || query["unread"] == "true"
-    }
-}
-
-struct LocalAgentSMSRequest: Equatable {
-    let to: String
-    let body: String
-    let moduleID: String?
-    let requestID: String
-
-    init(body json: [String: Any]) throws {
-        guard Set(json.keys).isSubset(of: ["to", "body", "module", "request_id"]) else {
-            throw LocalAgentAPIRequestError(message: "Allowed keys: to, body, module, request_id")
-        }
-        guard let to = json["to"] as? String,
-              let normalized = CallATParser.normalizedDialNumber(to), normalized.count <= 32 else {
-            throw LocalAgentAPIRequestError(message: "to: up to 32 digits with an optional leading +")
-        }
-        guard let body = json["body"] as? String,
-              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, body.count <= 1000 else {
-            throw LocalAgentAPIRequestError(message: "body: 1...1000 characters")
-        }
-        guard let requestID = json["request_id"] as? String,
-              (8...128).contains(requestID.count),
-              requestID.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "-_.:".unicodeScalars.contains($0) }) else {
-            throw LocalAgentAPIRequestError(message: "request_id: 8...128 of [A-Za-z0-9-_.:], stable across retries")
-        }
-        self.to = normalized
-        self.body = body
-        self.moduleID = try LocalAgentAPIRoutes.moduleID(json["module"])
-        self.requestID = requestID
-    }
-}
-
-struct LocalAgentATRequest: Equatable {
-    let command: String
-    let moduleID: String?
-    let scope: LocalAgentAPIScope
-
-    init(body json: [String: Any]) throws {
-        guard Set(json.keys).isSubset(of: ["command", "module"]) else {
-            throw LocalAgentAPIRequestError(message: "Allowed keys: command, module")
-        }
-        guard let raw = json["command"] as? String else {
-            throw LocalAgentAPIRequestError(message: "command is required")
-        }
-        do {
-            command = try ATConsoleCommandValidator.validate(raw)
-        } catch {
-            throw LocalAgentAPIRequestError(message: error.localizedDescription)
-        }
-        moduleID = try LocalAgentAPIRoutes.moduleID(json["module"])
-        scope = LocalAgentATClassifier.isReadOnly(command) ? .atRead : .atWrite
-    }
-}
-
-/// Decides whether an AT command only reads state. Anything not recognised
-/// as a query needs the at.write scope, so unknown commands fail closed.
-enum LocalAgentATClassifier {
-    private static let bareReads: Set<String> = [
-        "AT", "ATI", "ATI0", "AT+CSQ", "AT+CEER", "AT+CNUM", "AT+CIMI", "AT+CGSN", "AT+GSN",
-        "AT+QCCID", "AT+CCID", "AT+ICCID", "AT+CGMR", "AT+GMR", "AT+CGMI", "AT+GMI",
-        "AT+CGMM", "AT+GMM", "AT+QNWINFO", "AT+QSPN", "AT+QGMR", "AT+QCSQ", "AT+QRSRP",
-        "AT+QRSRQ", "AT+QSINR", "AT+CGPADDR", "AT+CGCONTRDP", "AT+QLTS", "AT+CLAC",
-    ]
-    private static let readPrefixes = [
-        "AT+QENG=\"SERVINGCELL\"", "AT+QENG=\"NEIGHBOURCELL\"", "AT+CGPADDR=", "AT+CGCONTRDP=",
-        "AT+QLTS=", "AT+CEER=",
-    ]
-
-    static func isReadOnly(_ command: String) -> Bool {
-        let compact = command.uppercased().replacingOccurrences(of: " ", with: "")
-        if compact.hasSuffix("?") { return true }   // AT+X? and AT+X=?
-        if bareReads.contains(compact) { return true }
-        if readPrefixes.contains(where: { compact.hasPrefix($0) }) { return true }
-        // AT+QCFG="name" with no value is the query form.
-        if compact.hasPrefix("AT+QCFG=\""), !compact.contains(",") { return true }
-        return false
-    }
-}
-
 struct LocalAgentModule: Encodable {
     let id: String
     let name: String
@@ -352,5 +195,73 @@ enum LocalAgentCLIAccessFile {
 
     static func remove() {
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+struct LocalAgentGNSSStatus: Encodable {
+    let module: String
+    let enabled: Bool
+    let state: String
+    let satellites_in_view: Int?
+    let fix: LocalAgentGNSSFix?
+}
+
+struct LocalAgentGNSSFix: Encodable {
+    let timestamp: String
+    let latitude: Double
+    let longitude: Double
+    let altitude_m: Double?
+    let hdop: Double?
+    let speed_kmh: Double?
+    let satellites: Int?
+    let datum = "WGS-84"
+
+    init(_ fix: GNSSFix) {
+        timestamp = ISO8601DateFormatter().string(from: fix.timestamp)
+        latitude = fix.latitude
+        longitude = fix.longitude
+        altitude_m = fix.altitude
+        hdop = fix.hdop
+        speed_kmh = fix.speedKmh
+        satellites = fix.satellites
+    }
+}
+
+struct LocalAgentTraffic: Encodable {
+    let module: String
+    let month_received: UInt64
+    let month_sent: UInt64
+    let days: [LocalAgentTrafficDay]
+}
+
+struct LocalAgentTrafficDay: Encodable {
+    let day: String
+    let received: UInt64
+    let sent: UInt64
+}
+
+struct LocalAgentDiagnostics: Encodable {
+    struct Check: Encodable { let name: String; let ok: Bool; let detail: String }
+    struct Cell: Encodable {
+        let technology: String?; let band: String?; let earfcn: String?; let cell_id: String?
+        let pci: String?; let tac: String?; let rsrp: Int?; let rsrq: Int?; let sinr: Int?; let raw: String
+    }
+    let module: String
+    let interface: String?
+    let default_route_interface: String?
+    let checks: [Check]
+    let serving_cell: Cell?
+    let pdp_contexts: String?
+
+    init(module: CellularModuleSummary, result: ModuleDiagnostics) {
+        self.module = module.id.rawValue
+        interface = module.network.bsdName
+        default_route_interface = result.defaultRouteInterface
+        checks = result.checks.map { Check(name: $0.name, ok: $0.ok, detail: $0.detail) }
+        serving_cell = result.servingCell.map {
+            Cell(technology: $0.technology, band: $0.band, earfcn: $0.earfcn, cell_id: $0.cellID,
+                 pci: $0.physicalCellID, tac: $0.tac, rsrp: $0.rsrp, rsrq: $0.rsrq, sinr: $0.sinr, raw: $0.raw)
+        }
+        pdp_contexts = result.pdpContexts
     }
 }

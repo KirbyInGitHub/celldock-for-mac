@@ -31,6 +31,13 @@ every permission; this skill grants none.
   `AT+QCFG="usbnet"`, `AT+CEER`. Bare queries without `?` (e.g. `AT+CSQ`) also
   need `--yes` in the CLI.
 - Calls: `celldock call status`.
+- Location: `celldock gnss` (state, last fix in WGS-84). Turning the receiver
+  on or off (`celldock gnss on --dry-run`, then `--yes`) needs the user's ask;
+  indoors it usually cannot get a fix.
+- Data usage: `celldock traffic --days 30` (bytes per day, counted by CellDock).
+- Connectivity problems: `celldock diagnose` pings a public IP, queries carrier DNS and fetches HTTPS over the module's interface, and
+  returns the serving cell (band, RSRP, SINR) and PDP contexts. Run it before
+  guessing at APN or signal problems.
 
 ## Changing state
 

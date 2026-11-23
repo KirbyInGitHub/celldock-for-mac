@@ -21,6 +21,8 @@ final class AppState: ObservableObject {
     lazy var localCallAPIController = LocalCallAPIController(appState: self)
     lazy var socksProxyController = SOCKSProxyController(appState: self)
     lazy var voWiFiController = VoWiFiController(appState: self)
+    lazy var gnssController = GNSSController(appState: self)
+    lazy var networkDiagnosticsController = NetworkDiagnosticsController(appState: self)
     lazy var moduleThroughputMonitor = ModuleThroughputMonitor(appState: self)
     @Published private(set) var modem = ModemSnapshot()
     @Published private(set) var euicc = EUICCSnapshot.empty
@@ -642,6 +644,8 @@ final class AppState: ObservableObject {
         localCallAPIController.start()
         socksProxyController.start()
         voWiFiController.start()
+        gnssController.start()
+        networkDiagnosticsController.start()
         modemInventoryService.onDevices = { [weak self] devices in
             guard let self, !AppTerminationCoordinator.shared.isTerminationPending else { return }
             self.discoveredModemDevices = devices
@@ -670,6 +674,7 @@ final class AppState: ObservableObject {
             self?.alertSounds.stopAll()
             self?.socksProxyController.stop()
             self?.voWiFiController.stop()
+            self?.networkDiagnosticsController.stop()
         }
         AppTerminationCoordinator.shared.cleanup = { [weak self] attempt, completion in
             guard let self else {
@@ -1162,6 +1167,22 @@ final class AppState: ObservableObject {
         if moduleID == activeCommunicationModuleID { return modem }
         guard let locationID = locationID(for: moduleID) else { return ModemSnapshot() }
         return auxiliaryModemSnapshots[locationID] ?? ModemSnapshot()
+    }
+
+    /// Runs an AT command for a background feature (GNSS, diagnostics) on the
+    /// module's serial queue without taking the AT console's command slot.
+    func runFeatureAT(
+        _ command: String,
+        via moduleID: CellularModuleID,
+        completion: @escaping (ATConsoleExecutionResult) -> Void
+    ) {
+        guard let service = modemService(for: moduleID) else {
+            completion(ATConsoleExecutionResult(command: command, output: "",
+                                                error: L10n.tr("所选模组尚未就绪。"),
+                                                elapsedMilliseconds: 0, timestamp: Date()))
+            return
+        }
+        service.executeAT(command, completion: completion)
     }
 
     /// The module a local API request without an explicit module will use.

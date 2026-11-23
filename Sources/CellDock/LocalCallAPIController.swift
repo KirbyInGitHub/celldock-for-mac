@@ -7,13 +7,20 @@ import Security
 final class LocalCallAPIController: ObservableObject {
     static let endpoint = "http://127.0.0.1:7576"
     private static let enabledKey = "LocalCallAPIEnabled.v1"
+    private static let remoteKey = "LocalCallAPIRemoteTailscale.v1"
     @Published private(set) var isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
     @Published private(set) var isRunning = false
     @Published private(set) var error: String?
+    @Published private(set) var isRemoteEnabled = UserDefaults.standard.bool(forKey: remoteKey)
+    /// http://<tailscale-ip>:7576 while the remote listener runs.
+    @Published private(set) var remoteEndpoint: String?
+    @Published private(set) var remoteError: String?
     private weak var appState: AppState?
     private var server: LocalCallAPIServer?
+    private var remoteServer: LocalCallAPIServer?
     private var generation: UUID?
     private var token: String?
+    private var handler: LocalCallAPIServer.Handler?
     private let idempotency = LocalAgentIdempotencyStore()
 
     init(appState: AppState) { self.appState = appState }
@@ -22,6 +29,12 @@ final class LocalCallAPIController: ObservableObject {
         isEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.enabledKey)
         if enabled { start() } else { stop() }
+    }
+
+    func setRemoteEnabled(_ enabled: Bool) {
+        isRemoteEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.remoteKey)
+        if enabled { startRemote() } else { stopRemote() }
     }
 
     func start() {
@@ -33,7 +46,7 @@ final class LocalCallAPIController: ObservableObject {
             LocalAgentCLIAccessFile.write(token: token, endpoint: Self.endpoint)
             let generation = UUID()
             self.generation = generation
-            let server = LocalCallAPIServer(token: token) { [weak self] command, completion in
+            let handler: LocalCallAPIServer.Handler = { [weak self] command, completion in
                 guard let self, self.generation == generation, self.isEnabled,
                       let appState = self.appState else {
                     completion(.error(503, "Local call API is stopped"))
@@ -58,9 +71,11 @@ final class LocalCallAPIController: ObservableObject {
                 case .dial(let number): appState.dial(number, completion: completed)
                 case .answer: appState.answerCall(completion: completed)
                 case .hangUp: appState.hangUp(completion: completed)
-                case .status, .modules, .messages, .sendSMS, .at: break
+                case .status, .modules, .messages, .sendSMS, .at, .gnss, .setGNSS, .traffic, .diagnose: break
                 }
             }
+            self.handler = handler
+            let server = LocalCallAPIServer(token: token, handler: handler)
             self.server = server
             try server.start { [weak self] error in
                 guard let self, self.generation == generation else { return }
@@ -72,6 +87,7 @@ final class LocalCallAPIController: ObservableObject {
                     self.generation = nil
                 }
             }
+            startRemote()
         } catch {
             stop()
             self.error = error.localizedDescription
@@ -80,12 +96,46 @@ final class LocalCallAPIController: ObservableObject {
 
     func stop() {
         LocalAgentCLIAccessFile.remove()
+        stopRemote()
+        handler = nil
         generation = nil
         server?.stop()
         server = nil
         token = nil
         isRunning = false
         error = nil
+    }
+
+    private func startRemote() {
+        guard isEnabled, isRemoteEnabled, remoteServer == nil, let token, let handler else { return }
+        remoteError = nil
+        guard let address = TailscaleAddress.local() else {
+            remoteError = L10n.tr("没有找到这台 Mac 的 Tailscale 地址，请先连接 Tailscale。")
+            return
+        }
+        let server = LocalCallAPIServer(token: token, host: address, handler: handler)
+        remoteServer = server
+        do {
+            try server.start { [weak self] error in
+                guard let self, self.remoteServer === server else { return }
+                self.remoteEndpoint = error == nil ? "http://\(address):7576" : nil
+                self.remoteError = error
+                if error != nil {
+                    server.stop()
+                    self.remoteServer = nil
+                }
+            }
+        } catch {
+            remoteServer = nil
+            remoteError = error.localizedDescription
+        }
+    }
+
+    private func stopRemote() {
+        remoteServer?.stop()
+        remoteServer = nil
+        remoteEndpoint = nil
+        remoteError = nil
     }
 
     func copyToken() {
@@ -175,6 +225,62 @@ private extension LocalCallAPIController {
                 completion(.json(outcome, status: outcome.status == "failed" ? 409 : 200))
             }
 
+        case .gnss:
+            guard !denied(.gnssRead) else { return true }
+            let gnss = appState.gnssController
+            completion(.json(gnss.availableModules.map { module -> LocalAgentGNSSStatus in
+                let state = gnss.state(for: module.id)
+                var satellites: Int?
+                if case .searching(let count) = state { satellites = count }
+                return LocalAgentGNSSStatus(module: module.id.rawValue, enabled: gnss.isEnabled(module.id),
+                                            state: state.apiValue, satellites_in_view: satellites,
+                                            fix: gnss.lastFixes[module.id].map(LocalAgentGNSSFix.init))
+            }))
+
+        case let .setGNSS(enabled, rawModule):
+            guard !denied(.gnssControl) else { return true }
+            guard let resolved = resolve(rawModule) else { return true }
+            let moduleID = appState.resolvedCommunicationModuleID(resolved)
+            appState.gnssController.setEnabled(enabled, for: moduleID) { result in
+                switch result {
+                case .success:
+                    completion(.json(["module": moduleID.rawValue, "enabled": enabled ? "true" : "false",
+                                      "state": appState.gnssController.state(for: moduleID).apiValue]))
+                case .failure(let message):
+                    completion(.error(409, message))
+                }
+            }
+
+        case .traffic(let days):
+            guard !denied(.modulesRead) else { return true }
+            let diagnostics = appState.networkDiagnosticsController
+            completion(.json(diagnostics.availableModules.map { module in
+                let month = diagnostics.monthTotal(for: module)
+                return LocalAgentTraffic(
+                    module: module.id.rawValue, month_received: month.received, month_sent: month.sent,
+                    days: diagnostics.days(for: module, last: days).map {
+                        LocalAgentTrafficDay(day: $0.day, received: $0.received, sent: $0.sent)
+                    })
+            }))
+
+        case .diagnose(let rawModule):
+            guard !denied(.modulesRead) else { return true }
+            guard let resolved = resolve(rawModule) else { return true }
+            let moduleID = appState.resolvedCommunicationModuleID(resolved)
+            let diagnostics = appState.networkDiagnosticsController
+            guard let module = diagnostics.availableModules.first(where: { $0.id == moduleID }) else {
+                completion(.error(409, "The module is not connected"))
+                return true
+            }
+            guard diagnostics.diagnostics[moduleID]?.isRunning != true else {
+                completion(.error(409, "Diagnostics are already running for this module"))
+                return true
+            }
+            diagnostics.runDiagnostics(for: module) {
+                let result = diagnostics.diagnostics[moduleID] ?? ModuleDiagnostics()
+                completion(.json(LocalAgentDiagnostics(module: module, result: result)))
+            }
+
         case .at(let request):
             guard !denied(request.scope) else { return true }
             guard let resolved = resolve(request.moduleID) else { return true }
@@ -209,36 +315,48 @@ private extension LocalCallAPIStatus {
     }
 }
 
+/// The token lives in a 0600 file in the user's Application Support folder
+/// rather than the Keychain: a self-signed build changes its code signature
+/// on every rebuild, and the Keychain would ask for the login password again
+/// each time. Delete the file (with the API off) to issue a new token.
 private enum LocalCallAPICredentialStore {
+    static var url: URL {
+        AppDataDirectory.userApplicationSupport().appendingPathComponent("local-api-token")
+    }
+
     static func loadOrCreate() throws -> String {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "app.celldock.mac.local-call-api",
-            kSecAttrAccount as String: "bearer-token",
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query.merging([
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]) { _, new in new } as CFDictionary, &item)
-        if status == errSecSuccess, let data = item as? Data,
-           let token = String(data: data, encoding: .utf8), !token.isEmpty { return token }
-        guard status == errSecItemNotFound else { throw keychainError(status) }
+        let path = url.path
+        var info = stat()
+        if lstat(path, &info) == 0 {
+            guard (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == getuid(), (info.st_mode & 0o077) == 0,
+                  let data = FileManager.default.contents(atPath: path),
+                  let token = String(data: data, encoding: .utf8)?
+                      .trimmingCharacters(in: .whitespacesAndNewlines),
+                  token.count >= 32 else {
+                throw NSError(domain: NSCocoaErrorDomain, code: NSFileReadCorruptFileError, userInfo: [
+                    NSLocalizedDescriptionKey: "\(path) must be a 0600 file owned by you; delete it to issue a new token."
+                ])
+            }
+            return token
+        }
         var bytes = [UInt8](repeating: 0, count: 32)
         let randomStatus = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        guard randomStatus == errSecSuccess else { throw keychainError(randomStatus) }
+        guard randomStatus == errSecSuccess else { throw randomError(randomStatus) }
         let token = Data(bytes).base64EncodedString()
-        let added = SecItemAdd(query.merging([
-            kSecValueData as String: Data(token.utf8),
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        ]) { _, new in new } as CFDictionary, nil)
-        guard added == errSecSuccess else { throw keychainError(added) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        guard FileManager.default.createFile(atPath: path, contents: Data(token.utf8),
+                                             attributes: [.posixPermissions: 0o600]) else {
+            throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteUnknownError, userInfo: [
+                NSLocalizedDescriptionKey: "Could not write \(path)"
+            ])
+        }
         return token
     }
 
-    private static func keychainError(_ status: OSStatus) -> NSError {
+    private static func randomError(_ status: OSStatus) -> NSError {
         NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [
-            NSLocalizedDescriptionKey: SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error \(status)"
+            NSLocalizedDescriptionKey: SecCopyErrorMessageString(status, nil) as String? ?? "Random generator error \(status)"
         ])
     }
 }

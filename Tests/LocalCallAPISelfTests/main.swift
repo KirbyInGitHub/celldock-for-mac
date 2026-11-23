@@ -28,6 +28,7 @@ func rejected(_ data: Data, _ status: Int) {
 struct LocalCallAPITests {
     @MainActor static func main() async throws {
         try testEndEvidenceAfterInitialization()
+        try testAgentEndpoints()
         await testTerminationCancellation()
         await testDeferredShutdownCancellation()
         await testInFlightShutdownCancellation(clean: true)
@@ -100,7 +101,8 @@ struct LocalCallAPITests {
         rejected(request(headers: "Origin: null\r\n"), 403)
         rejected(request(port: 1234), 403)
         rejected(request("GET"), 405)
-        rejected(request("POST", "/api/at"), 404)
+        // /api/at exists for the agent endpoints; a dial body is not a valid AT request.
+        rejected(request("POST", "/api/at"), 400)
         rejected(request("POST", "/api/calls/dial?number=123"), 404)
         rejected(request(headers: "Authorization: Bearer test-token\r\n"), 400)
         rejected(request(headers: "Content-Length: 1\r\n"), 400)
@@ -215,4 +217,50 @@ struct LocalCallAPITests {
         session.invalidateAndCancel()
         print("Local call API protocol and loopback integration tests passed")
     }
+}
+
+/// Agent endpoints: routing, validation, AT scope classification and the
+/// Tailscale host/peer rules.
+func testAgentEndpoints() throws {
+    expect(try decode(request("GET", "/api/modules", body: "")) == .modules, "modules route")
+    expect(try decode(request("GET", "/api/gnss", body: "")) == .gnss, "gnss route")
+    expect(try decode(request("GET", "/api/traffic?days=7", body: "")) == .traffic(days: 7), "traffic route")
+    rejected(request("GET", "/api/traffic?days=0", body: ""), 400)
+    expect(try decode(request("POST", "/api/gnss", body: "{\"enabled\":true}"))
+           == .setGNSS(enabled: true, moduleID: nil), "gnss on")
+    rejected(request("POST", "/api/gnss", body: "{\"enabled\":\"yes\"}"), 400)
+    expect(try decode(request("POST", "/api/diagnostics", body: "{}")) == .diagnose(moduleID: nil), "diagnose")
+    rejected(request("GET", "/api/at", body: ""), 405)
+
+    if case .messages(let query)? = try decode(request("GET", "/api/sms?limit=5&unread=1", body: "")) {
+        expect(query.limit == 5 && query.unreadOnly, "sms query")
+    } else { fatalError("sms list route") }
+    rejected(request("GET", "/api/sms?limit=9999", body: ""), 400)
+    rejected(request("GET", "/api/sms?foo=1", body: ""), 400)
+
+    let send = "{\"to\":\"+86 138 0000 0000\",\"body\":\"hi\",\"request_id\":\"req-00000001\"}"
+    if case .sendSMS(let sms)? = try decode(request("POST", "/api/sms/send", body: send)) {
+        expect(sms.to == "+8613800000000" && sms.requestID == "req-00000001", "sms send parse")
+    } else { fatalError("sms send route") }
+    rejected(request("POST", "/api/sms/send", body: "{\"to\":\"10086\",\"body\":\"hi\"}"), 400)
+
+    for (command, readOnly) in [("AT+CSQ", true), ("AT+CEREG?", true), ("AT+QCFG=\"usbnet\"", true),
+                                ("AT+QENG=\"servingcell\"", true), ("AT+CGDCONT=?", true),
+                                ("AT+CFUN=1,1", false), ("AT+QCFG=\"usbnet\",1", false),
+                                ("AT+QPOWD", false), ("ATZ", false)] {
+        expect(LocalAgentATClassifier.isReadOnly(command) == readOnly, "AT classification: \(command)")
+    }
+    rejected(request("POST", "/api/at", body: "{\"command\":\"ATD10086;\"}"), 400)
+    rejected(request("POST", "/api/at", body: "{\"command\":\"AT+CMGS=\\\"10086\\\"\"}"), 400)
+
+    // A Tailscale listener checks Host against its own address.
+    let remote = Data("GET /api/modules HTTP/1.1\r\nHost: 100.81.98.57:17576\r\nAuthorization: Bearer test-token\r\n\r\n".utf8)
+    expect(try LocalCallAPIProtocol.decode(remote, token: "test-token", port: 17576, host: "100.81.98.57") == .modules,
+           "remote host accepted")
+    do {
+        _ = try decode(remote)
+        fatalError("Loopback listener accepted a Tailscale Host header")
+    } catch let error as LocalCallAPIHTTPError { expect(error.status == 403, "remote host on loopback") }
+    expect(TailscaleAddress.contains("100.64.0.1") && TailscaleAddress.contains("100.127.255.254"), "tailscale range")
+    expect(!TailscaleAddress.contains("100.128.0.1") && !TailscaleAddress.contains("192.168.1.2"), "outside tailscale")
 }

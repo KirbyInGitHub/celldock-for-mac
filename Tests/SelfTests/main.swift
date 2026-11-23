@@ -2082,6 +2082,11 @@ do {
         "Baiwang product string did not take priority over a Quectel vendor string"
     )
     try expect(
+        ModemHardwareFamily.classify(vendorName: "BAIWANG", productName: "EG25G_QDC507") ==
+            .baiwangInjectedVoice,
+        "DJI 4G module (BAIWANG vendor string) was not classified as Baiwang voice"
+    )
+    try expect(
         ModemHardwareFamily.classify(vendorName: nil, productName: "unknown") == .unknown,
         "unknown USB strings were classified as a supported hardware family"
     )

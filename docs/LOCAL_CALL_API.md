@@ -12,12 +12,15 @@ services and USB discovery before reopening the listener; the modules may still
 need time to reconnect and initialize their SIMs. Additional quit requests are
 cancelled while this in-flight cleanup is settling.
 
-The random bearer token is stored in the macOS Keychain. Treat it as a password:
-any local program holding it can control calls and read the current phone number.
-Disabling the API stops accepting requests. It does not hang up an existing call
-or cancel an operation already handed to the modem. To revoke a leaked token,
-disable the API, delete the `bearer-token` item for service
-`app.celldock.mac.local-call-api` in Keychain Access, and enable it again.
+The random bearer token is stored in
+`~/Library/Application Support/CellDock/local-api-token` (mode 0600). Treat it
+as a password: any local program holding it can control calls and read the
+current phone number. Disabling the API stops accepting requests. It does not
+hang up an existing call or cancel an operation already handed to the modem.
+To revoke a leaked token, disable the API, delete that file, and enable the
+API again. (Upstream keeps the token in the Keychain; a self-signed build
+changes its signature on every rebuild, so the Keychain would ask for the
+login password after each update.)
 
 ## Requests
 

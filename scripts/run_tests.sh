@@ -21,6 +21,8 @@ swiftc \
   "$ROOT/Sources/CellDock/ATResponseParser.swift" \
   "$ROOT/Sources/CellDock/SMSVerificationCode.swift" \
   "$ROOT/Sources/CellDock/SMSPDUDecoder.swift" \
+  "$ROOT/Sources/CellDock/ATConsoleModels.swift" \
+  "$ROOT/Sources/CellDock/LocalAgentAPIRequests.swift" \
   "$ROOT/Sources/CellDock/LocalCallAPIProtocol.swift" \
   "$ROOT/Sources/CellDock/LocalCallAPIServer.swift" \
   "$ROOT/Sources/CellDock/AppTerminationCoordinator.swift" \

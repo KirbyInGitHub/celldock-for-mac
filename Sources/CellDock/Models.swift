@@ -77,7 +77,10 @@ enum ModemHardwareFamily: Equatable {
         let product = normalizedUSBName(productName)
         // Product wins deliberately: Baiwang devices can carry a Quectel VID,
         // PID or vendor string after their USB identity has been customized.
-        if product == "BAIWANG" { return .baiwangInjectedVoice }
+        // The DJI 4G module (2CA3:4006) keeps DJI's USB identity and reports
+        // vendor "BAIWANG", product "EG25G_QDC507"; it is the same Baiwang
+        // QDC507 hardware.
+        if product == "BAIWANG" || vendor == "BAIWANG" { return .baiwangInjectedVoice }
         if vendor == "QUECTEL" { return .quectelNativeVoice }
         return .unknown
     }
