@@ -1938,3 +1938,11 @@
 "通话操作正在进行，请稍后重试。" = "A call operation is in progress. Try again shortly.";
 
 "通话已结束，原因未知" = "Call ended; reason unknown";
+
+/* Local API agent scopes */
+"读取模组与网络状态" = "Read module and network status";
+"读取短信" = "Read messages";
+"执行只读 AT 查询" = "Run read-only AT queries";
+"执行会修改模组的 AT 命令" = "Run AT commands that change the module";
+"命令行与 AI 权限" = "Command line and AI permissions";
+"celldock 命令行和 AI 通过同一个本地 API 和令牌工作，只能使用这里勾选的能力。" = "The celldock command line and AI agents use the same local API and token, and can only use the capabilities checked here.";

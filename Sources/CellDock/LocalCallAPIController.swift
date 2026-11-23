@@ -14,6 +14,7 @@ final class LocalCallAPIController: ObservableObject {
     private var server: LocalCallAPIServer?
     private var generation: UUID?
     private var token: String?
+    private let idempotency = LocalAgentIdempotencyStore()
 
     init(appState: AppState) { self.appState = appState }
 
@@ -41,6 +42,9 @@ final class LocalCallAPIController: ObservableObject {
                     completion(.json(LocalCallAPIStatus(appState: appState)))
                     return
                 }
+                if self.handleAgentCommand(command, appState: appState, completion: completion) {
+                    return
+                }
                 let completed: (ModemActionResult) -> Void = { result in
                     switch result {
                     case .success:
@@ -53,7 +57,7 @@ final class LocalCallAPIController: ObservableObject {
                 case .dial(let number): appState.dial(number, completion: completed)
                 case .answer: appState.answerCall(completion: completed)
                 case .hangUp: appState.hangUp(completion: completed)
-                case .status: break
+                case .status, .modules, .messages, .sendSMS, .at: break
                 }
             }
             self.server = server
@@ -86,6 +90,109 @@ final class LocalCallAPIController: ObservableObject {
         guard isRunning, let token else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(token, forType: .string)
+    }
+}
+
+// MARK: - Agent endpoints
+
+private extension LocalCallAPIController {
+    /// Returns false for the original call commands so they keep their path.
+    func handleAgentCommand(_ command: LocalCallAPICommand, appState: AppState,
+                            completion: @escaping (LocalCallAPIResponse) -> Void) -> Bool {
+        func denied(_ scope: LocalAgentAPIScope) -> Bool {
+            guard !scope.isEnabled else { return false }
+            completion(.json(["error": "Scope \(scope.rawValue) is off; enable it in CellDock Settings → Local API",
+                              "required_scope": scope.rawValue], status: 403))
+            return true
+        }
+        func resolve(_ raw: String?) -> CellularModuleID?? {
+            guard let raw else { return .some(nil) }
+            let id = CellularModuleID(rawValue: raw)
+            guard appState.cellularModules.contains(where: { $0.id == id }) else {
+                completion(.error(404, "Unknown module \(raw); list modules with GET /api/modules"))
+                return nil
+            }
+            return .some(id)
+        }
+
+        switch command {
+        case .status, .dial, .answer, .hangUp:
+            return false
+
+        case .modules:
+            guard !denied(.modulesRead) else { return true }
+            let modules = appState.cellularModules.map {
+                LocalAgentModule($0, networkMode: appState.networkMode(for: $0.id))
+            }
+            completion(.json(modules))
+
+        case .messages(let query):
+            guard !denied(.smsRead) else { return true }
+            var messages = appState.messages
+            if let id = query.id {
+                guard let message = messages.first(where: { $0.id == id }) else {
+                    completion(.error(404, "No message with that id"))
+                    return true
+                }
+                completion(.json([LocalAgentMessage(message)]))
+                return true
+            }
+            if let module = query.moduleID { messages = messages.filter { $0.moduleID?.rawValue == module } }
+            if query.unreadOnly { messages = messages.filter { !$0.isRead && !$0.isOutgoing } }
+            messages.sort { $0.timestamp > $1.timestamp }
+            completion(.json(messages.prefix(query.limit).map(LocalAgentMessage.init)))
+
+        case .sendSMS(let request):
+            guard !denied(.smsSend) else { return true }
+            guard let resolved = resolve(request.moduleID) else { return true }
+            switch idempotency.begin(request) {
+            case .pending:
+                completion(.error(409, "This request_id is still sending; check GET /api/sms before retrying"))
+                return true
+            case .conflict:
+                completion(.error(409, "request_id was already used for a different message"))
+                return true
+            case .done(let result):
+                completion(.json(result))
+                return true
+            case .new:
+                break
+            }
+            appState.sendSMS(to: request.to, body: request.body, via: resolved) { [weak self] result in
+                let moduleID = appState.resolvedCommunicationModuleID(resolved).rawValue
+                let outcome: LocalAgentSMSSendResult
+                switch result {
+                case .success(let detail):
+                    outcome = .init(request_id: request.requestID, module: moduleID, to: request.to,
+                                    status: "sent", detail: detail, replayed: false)
+                case let .failure(message, uncertain):
+                    outcome = .init(request_id: request.requestID, module: moduleID, to: request.to,
+                                    status: uncertain ? "uncertain" : "failed", detail: message, replayed: false)
+                }
+                self?.idempotency.finish(request, result: outcome)
+                completion(.json(outcome, status: outcome.status == "failed" ? 409 : 200))
+            }
+
+        case .at(let request):
+            guard !denied(request.scope) else { return true }
+            guard let resolved = resolve(request.moduleID) else { return true }
+            guard !appState.isExecutingAT else {
+                completion(.error(409, "Another AT command is running; retry shortly"))
+                return true
+            }
+            guard !appState.moduleHasCall(resolved) else {
+                completion(.error(409, "The module has an active call"))
+                return true
+            }
+            let moduleID = appState.resolvedCommunicationModuleID(resolved).rawValue
+            appState.executeAT(request.command, via: resolved) { result in
+                completion(.json(LocalAgentATResult(module: moduleID, command: result.command,
+                                                    ok: result.isSuccess, output: result.output,
+                                                    error: result.error,
+                                                    elapsed_ms: result.elapsedMilliseconds)))
+            }
+        }
+        return true
     }
 }
 

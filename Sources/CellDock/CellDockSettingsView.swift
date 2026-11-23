@@ -974,7 +974,39 @@ private struct LocalCallAPISettingsView: View {
                 } else if !controller.isRunning {
                     ProgressView().controlSize(.small)
                 }
+                LocalAgentAPIScopeSettingsView()
             }
         }
+    }
+}
+
+/// Per-capability switches for the CLI and agent endpoints.
+private struct LocalAgentAPIScopeSettingsView: View {
+    @State private var enabled = Dictionary(uniqueKeysWithValues:
+        LocalAgentAPIScope.allCases.map { ($0, $0.isEnabled) })
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.tr("命令行与 AI 权限"))
+                .font(.caption.weight(.semibold))
+            ForEach(LocalAgentAPIScope.allCases) { scope in
+                Toggle(isOn: Binding(
+                    get: { enabled[scope] ?? false },
+                    set: { scope.isEnabled = $0; enabled[scope] = $0 }
+                )) {
+                    HStack(spacing: 6) {
+                        Text(scope.title)
+                        Text(verbatim: scope.rawValue)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.checkbox)
+            }
+            Text(L10n.tr("celldock 命令行和 AI 通过同一个本地 API 和令牌工作，只能使用这里勾选的能力。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
     }
 }

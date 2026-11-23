@@ -1164,6 +1164,11 @@ final class AppState: ObservableObject {
         return auxiliaryModemSnapshots[locationID] ?? ModemSnapshot()
     }
 
+    /// The module a local API request without an explicit module will use.
+    func resolvedCommunicationModuleID(_ requested: CellularModuleID?) -> CellularModuleID {
+        communicationModuleID(requested: requested)
+    }
+
     private func communicationModuleID(
         requested: CellularModuleID? = nil
     ) -> CellularModuleID {

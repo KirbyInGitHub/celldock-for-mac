@@ -177,6 +177,7 @@ if [[ -d "$ROOT/Resources/ModuleVoice" ]]; then
 fi
 cp "$BIN_DIR/CellDock" "$STAGE_APP/Contents/MacOS/CellDock"
 cp "$BIN_DIR/CellDockNetworkHelper" "$STAGE_APP/$HELPER_RELATIVE"
+cp "$BIN_DIR/celldock" "$STAGE_APP/Contents/MacOS/celldock"
 VOWIFI_GO_ROOT="$ROOT/ThirdParty/vowifi-go"
 [[ -f "$VOWIFI_GO_ROOT/go.mod" && -d "$VOWIFI_GO_ROOT/vendor" ]] || {
   print -u2 "Vendored vowifi-go runtime source is missing."
@@ -248,6 +249,12 @@ codesign \
   "${HELPER_REQUIREMENT_OPTIONS[@]}" \
   --identifier app.celldock.mac.network.helper \
   "$STAGE_APP/$HELPER_RELATIVE"
+codesign \
+  --force \
+  --sign "$SIGN_IDENTITY" \
+  "${CODESIGN_OPTIONS[@]}" \
+  --identifier app.celldock.mac.cli \
+  "$STAGE_APP/Contents/MacOS/celldock"
 codesign \
   --force \
   --sign "$SIGN_IDENTITY" \

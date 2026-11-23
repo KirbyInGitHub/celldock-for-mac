@@ -35,6 +35,11 @@ enum LocalCallAPICommand: Equatable {
     case dial(String)
     case answer
     case hangUp
+    // Agent endpoints, see LocalAgentAPI.swift.
+    case modules
+    case messages(LocalAgentMessageQuery)
+    case sendSMS(LocalAgentSMSRequest)
+    case at(LocalAgentATRequest)
 }
 
 struct LocalCallAPIResponse {
@@ -114,29 +119,47 @@ enum LocalCallAPIProtocol {
         let expected = boundary.upperBound + length
         guard data.count >= expected else { return nil }
         guard data.count == expected else { try fail(400, "Pipelining is not supported") }
-        let path = first[1]
-        let routes = ["/api/calls/status", "/api/calls/dial", "/api/calls/answer", "/api/calls/hangup"]
-        guard routes.contains(path) else { try fail(404, "Unknown endpoint") }
-        guard first[0] == (path == routes[0] ? "GET" : "POST") else {
+        let target = first[1]
+        let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? target
+        let query = LocalAgentAPIRoutes.queryItems(target)
+        let getRoutes = ["/api/calls/status", "/api/modules", "/api/sms"]
+        let postRoutes = ["/api/calls/dial", "/api/calls/answer", "/api/calls/hangup",
+                          "/api/sms/send", "/api/at"]
+        guard getRoutes.contains(path) || postRoutes.contains(path) else { try fail(404, "Unknown endpoint") }
+        guard first[0] == (getRoutes.contains(path) ? "GET" : "POST") else {
             try fail(405, "Method not allowed")
         }
-        if path == routes[0] {
+        if getRoutes.contains(path) {
             guard length == 0 else { try fail(400, "Unexpected body") }
-            return .status
+            switch path {
+            case "/api/modules": return .modules
+            case "/api/sms":
+                do { return .messages(try LocalAgentMessageQuery(query: query)) }
+                catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
+            default: return .status
+            }
         }
         guard headers["content-type"]?.lowercased().split(separator: ";").first == "application/json" else {
             try fail(415, "Content-Type must be application/json")
         }
         guard let object = try? JSONSerialization.jsonObject(with: Data(data[boundary.upperBound...])),
               let body = object as? [String: Any] else { try fail(400, "Expected a JSON object") }
-        if path == routes[1] {
+        switch path {
+        case "/api/calls/dial":
             guard Set(body.keys) == ["number"], let raw = body["number"] as? String,
                   let number = CallATParser.normalizedDialNumber(raw), number.count <= 32 else {
                 try fail(400, "Expected number: up to 32 digits with an optional leading +")
             }
             return .dial(number)
+        case "/api/sms/send":
+            do { return .sendSMS(try LocalAgentSMSRequest(body: body)) }
+            catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
+        case "/api/at":
+            do { return .at(try LocalAgentATRequest(body: body)) }
+            catch let error as LocalAgentAPIRequestError { try fail(400, error.message) }
+        default:
+            guard body.isEmpty else { try fail(400, "Expected an empty JSON object") }
+            return path == "/api/calls/answer" ? .answer : .hangUp
         }
-        guard body.isEmpty else { try fail(400, "Expected an empty JSON object") }
-        return path == routes[2] ? .answer : .hangUp
     }
 }

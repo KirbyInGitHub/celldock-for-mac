@@ -149,3 +149,42 @@ Do not automatically retry an action after a timeout or broken connection: the
 modem may already have accepted it. Query status and reconcile with the app first.
 If port 7576 is occupied, Settings shows the listener error; stop the conflicting
 service and toggle the API off and on to retry.
+
+## Agent endpoints and the `celldock` CLI
+
+The same listener and token also serve modules, SMS and AT commands. Each is
+gated by a scope under **Settings → Local call API → Command line and AI
+permissions**; a request outside an enabled scope returns `403` with
+`required_scope`. Reads (`modules.read`, `sms.read`, `at.read`) default on;
+`sms.send` and `at.write` default off.
+
+| Method | Path | Scope | Body / query |
+| --- | --- | --- | --- |
+| GET | `/api/modules` | `modules.read` | — |
+| GET | `/api/sms` | `sms.read` | `limit` (1–500), `module`, `id`, `unread=1` |
+| POST | `/api/sms/send` | `sms.send` | `{"to", "body", "request_id", "module"?}` |
+| POST | `/api/at` | `at.read` or `at.write` | `{"command", "module"?}` |
+
+`/api/at` treats queries (`AT+X?`, `AT+X=?`, `AT+QCFG="name"`, and known
+read-only commands such as `AT+CSQ`) as `at.read`; anything else needs
+`at.write`. Dial, answer, hang-up and DTMF commands and data-prompt commands
+(`AT+CMGS=` and similar) are rejected, as in the AT console.
+
+`request_id` makes an SMS send idempotent: repeating the same id and message
+returns the first result with `replayed: true` instead of sending again; the
+same id with a different message is rejected. Ids are kept in memory until
+CellDock quits.
+
+The app bundle ships a JSON CLI at `CellDock.app/Contents/MacOS/celldock`:
+
+```sh
+ln -sf /Applications/CellDock.app/Contents/MacOS/celldock /usr/local/bin/celldock
+celldock modules
+celldock sms list --limit 20
+celldock at 'AT+CEREG?'
+celldock sms send --to +8613800000000 --message hi --request-id demo-0001 --dry-run
+celldock skill install    # writes ~/.claude/skills/celldock/SKILL.md
+```
+
+The CLI reads the token from `CELLDOCK_API_TOKEN` or from the Keychain item the
+app creates; macOS asks once before allowing it.

@@ -1935,3 +1935,11 @@
 "通话操作正在进行，请稍后重试。" = "Une opération d’appel est en cours. Réessayez dans un instant.";
 
 "通话已结束，原因未知" = "Appel terminé ; raison inconnue";
+
+/* Local API agent scopes */
+"读取模组与网络状态" = "Lire l’état des modules et du réseau";
+"读取短信" = "Lire les messages";
+"执行只读 AT 查询" = "Exécuter des requêtes AT en lecture seule";
+"执行会修改模组的 AT 命令" = "Exécuter des commandes AT qui modifient le module";
+"命令行与 AI 权限" = "Autorisations ligne de commande et IA";
+"celldock 命令行和 AI 通过同一个本地 API 和令牌工作，只能使用这里勾选的能力。" = "La ligne de commande celldock et les agents IA utilisent la même API locale et le même jeton, et ne peuvent utiliser que les capacités cochées ici.";
