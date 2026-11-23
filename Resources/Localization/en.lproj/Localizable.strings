@@ -2014,3 +2014,11 @@
 "允许通过 Tailscale 远程访问" = "Allow remote access over Tailscale";
 "只接受 Tailscale 网络里的设备，流量由 Tailscale 加密；令牌和上面的权限同样适用。其他电脑用 celldock --endpoint 加令牌访问。" = "Only devices on your Tailscale network can connect, and Tailscale encrypts the traffic; the token and the permissions above still apply. On another computer, use celldock --endpoint with the token.";
 "没有找到这台 Mac 的 Tailscale 地址，请先连接 Tailscale。" = "No Tailscale address found for this Mac. Connect Tailscale first.";
+
+/* SMS centre */
+"短信中心" = "SMS Centre";
+"这是中国电信 CDMA 时代的短信中心号码。在模组里用它发短信会显示已发送，但对方收不到。改为同一地区的 LTE 短信中心 %@ 即可正常送达；手机不受影响。" = "This is a China Telecom SMS centre number from the CDMA era. Messages sent through it from a module show as sent but never arrive. Switching to the LTE SMS centre for the same region, %@, makes them deliver. Phones are not affected.";
+"改为 %@" = "Change to %@";
+"短信中心号码无效。" = "The SMS centre number is not valid.";
+"模块没有保存新的短信中心号码。" = "The module did not save the new SMS centre number.";
+"短信中心已改为 %@。" = "SMS centre changed to %@.";

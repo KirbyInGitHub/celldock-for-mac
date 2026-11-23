@@ -173,6 +173,7 @@ final class AppState: ObservableObject {
     @Published var isChangingCall = false
     @Published var isChangingIncomingCallSetting = false
     @Published var isChangingVoiceCallSetting = false
+    @Published var isChangingSMSServiceCenter = false
     /// The module that is switching SIM slots and the slot it is moving to.
     @Published private(set) var simSlotSwitch: SIMSlotSwitchProgress?
     @Published var isSendingMessage = false
@@ -2594,6 +2595,22 @@ final class AppState: ObservableObject {
 
     /// Switches voice calls on or off in the module's firmware. The module
     /// restarts to apply it, so the caller confirms with the person first.
+    func setSMSServiceCenter(_ number: String, moduleID requestedModuleID: CellularModuleID? = nil) {
+        guard !isChangingSMSServiceCenter else { return }
+        let moduleID = requestedModuleID ?? currentCommunicationModuleID
+        guard let service = modemService(for: moduleID) else {
+            presentTransientMessage(L10n.tr("所选模组尚未就绪。"), isError: true)
+            return
+        }
+        isChangingSMSServiceCenter = true
+        dismissTransientMessage()
+        service.setSMSServiceCenter(number) { [weak self] result in
+            guard let self else { return }
+            self.isChangingSMSServiceCenter = false
+            self.show(result)
+        }
+    }
+
     func setVoiceCallsEnabled(
         _ enabled: Bool,
         moduleID requestedModuleID: CellularModuleID? = nil
