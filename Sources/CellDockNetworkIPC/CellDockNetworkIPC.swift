@@ -1,14 +1,14 @@
 import Foundation
 
 public enum CellDockNetworkIPC {
-    public static let protocolVersion = 12
+    public static let protocolVersion = 13
     /// Bump only when the privileged helper implementation itself must be
     /// replaced. Keeping this independent from the app build prevents UI-only
     /// rebuilds and code-signing changes from requesting administrator access.
     /// Bump whenever either the helper or its installed VoWiFi runtime changes;
     /// the identity mismatch is what makes the app run the authenticated
     /// installer and replace both root-owned executables atomically.
-    public static let helperBuildVersion = 17
+    public static let helperBuildVersion = 18
     public static let helperIdentity = "CellDock Network Helper/\(helperBuildVersion)"
     public static let helperLabel = "app.celldock.mac.network.helper"
     public static let helperExecutableName = "CellDockNetworkHelper"
@@ -288,6 +288,32 @@ public struct VoWiFiHostStatusRequest: Codable, Equatable, Sendable {
     }
 }
 
+/// Restricts what may leave through the modules' network interfaces.
+///
+/// When enabled, the helper loads a pf anchor that lets only root-owned
+/// sockets (the Tailscale network extension, CellDock's VoWiFi runtime and
+/// other system daemons), DHCP and ICMPv6 out of `interfaces`. Ordinary apps
+/// can then never fall back to the cellular link while a VPN tunnel such as a
+/// Tailscale exit node is down or reconnecting.
+public struct CellularLockdownRequest: Codable, Equatable, Sendable {
+    public let enabled: Bool
+    public let interfaces: [String]
+
+    public init(enabled: Bool, interfaces: [String]) {
+        self.enabled = enabled
+        self.interfaces = interfaces
+    }
+
+    /// BSD names only (`en9`), so nothing from the request can reach pf as syntax.
+    public var isValid: Bool {
+        interfaces.count <= 16 && interfaces.allSatisfy(Self.isInterfaceName)
+    }
+
+    public static func isInterfaceName(_ name: String) -> Bool {
+        name.range(of: "^[a-z]{1,8}[0-9]{1,4}$", options: .regularExpression) != nil
+    }
+}
+
 @objc(CellDockNetworkHelperProtocol)
 public protocol CellDockNetworkHelperProtocol {
     func ping(reply: @escaping (Int, String) -> Void)
@@ -310,5 +336,10 @@ public protocol CellDockNetworkHelperProtocol {
     func queryVoWiFiHost(
         _ requestData: Data,
         reply: @escaping (Int, String, Data?) -> Void
+    )
+
+    func setCellularLockdown(
+        _ requestData: Data,
+        reply: @escaping (Int, String) -> Void
     )
 }

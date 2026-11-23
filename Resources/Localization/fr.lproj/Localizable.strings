@@ -2019,3 +2019,10 @@
 "短信中心号码无效。" = "Le numéro du centre SMS n'est pas valide.";
 "模块没有保存新的短信中心号码。" = "Le module n'a pas enregistré le nouveau numéro du centre SMS.";
 "短信中心已改为 %@。" = "Centre SMS remplacé par %@.";
+
+/* Cellular lockdown */
+"蜂窝网络保护" = "Protection cellulaire";
+"蜂窝只走 Tailscale" = "Cellulaire via Tailscale uniquement";
+"普通 App 不能直接经模组网卡上网，只有 Tailscale 等系统服务可以。Wi-Fi 断开或隧道重连期间流量会被拦下，不会直接走 4G 出去。" = "Les apps ordinaires ne peuvent pas utiliser directement l'interface réseau du module ; seuls les services système comme Tailscale le peuvent. Quand le Wi-Fi tombe ou que le tunnel se reconnecte, le trafic est bloqué au lieu de sortir par la 4G.";
+"需要 Tailscale 开启出口节点，否则走蜂窝时普通 App 都上不了网。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。重启 Mac 后，CellDock 启动时重新生效。" = "Activez un nœud de sortie Tailscale, sinon les apps ordinaires n'ont pas Internet en cellulaire. Les tests de connectivité de la page Diagnostic échoueront ; les services système exécutés en root (dont VoWiFi) ne sont pas restreints. Après un redémarrage, la protection reprend au lancement de CellDock.";
+"连接模组后生效。" = "Prend effet une fois un module connecté.";

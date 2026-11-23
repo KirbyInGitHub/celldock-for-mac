@@ -76,6 +76,48 @@ final class NetworkHelperClient {
         }
     }
 
+    func setCellularLockdown(
+        _ request: CellularLockdownRequest,
+        installKind: NetworkHelperInstallRequestKind,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        ensureHelper(kind: installKind) { [weak self] result in
+            guard let self else { return }
+            if case let .failure(failure) = result {
+                completion(.failure(VoWiFiHostClientError.helperUnavailable(failure.message)))
+                return
+            }
+            guard let data = try? JSONEncoder().encode(request) else {
+                completion(.failure(VoWiFiHostClientError.invalidRequest))
+                return
+            }
+            let connection = self.makeConnection()
+            let gate = OneShot<Result<String, Error>> { [queue] result in
+                connection.invalidate()
+                queue.async { completion(result) }
+            }
+            connection.resume()
+            self.queue.asyncAfter(deadline: .now() + .seconds(15)) {
+                gate.resolve(.failure(VoWiFiHostClientError.timeout))
+            }
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                gate.resolve(.failure(error))
+            }) as? CellDockNetworkHelperProtocol else {
+                gate.resolve(.failure(VoWiFiHostClientError.helperUnavailable(
+                    L10n.tr("无法建立网络 helper XPC 代理。")
+                )))
+                return
+            }
+            proxy.setCellularLockdown(data) { code, message in
+                if CellDockNetworkResultCode(rawValue: code) == .success {
+                    gate.resolve(.success(message))
+                } else {
+                    gate.resolve(.failure(VoWiFiHostClientError.helperFailure(message)))
+                }
+            }
+        }
+    }
+
     /// Runs the shared ping-install-wait sequence and delivers the result on
     /// this client's queue.
     private func ensureHelper(

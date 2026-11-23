@@ -19,6 +19,7 @@ private struct NetworkModuleRestartContext {
 @MainActor
 final class AppState: ObservableObject {
     lazy var localCallAPIController = LocalCallAPIController(appState: self)
+    let cellularLockdownController = CellularLockdownController()
     lazy var socksProxyController = SOCKSProxyController(appState: self)
     lazy var voWiFiController = VoWiFiController(appState: self)
     lazy var gnssController = GNSSController(appState: self)
@@ -835,6 +836,7 @@ final class AppState: ObservableObject {
                 mapped[self.moduleID(for: locationID)] = status
             }
             self.networkStatusesByModuleID = mapped
+            self.cellularLockdownController.updateInterfaces(mapped.values.compactMap(\.bsdName))
             // A module that carries traffic again has earned a clean slate, so a
             // later outage gets the full soft-recovery budget instead of jumping
             // straight to a restart.

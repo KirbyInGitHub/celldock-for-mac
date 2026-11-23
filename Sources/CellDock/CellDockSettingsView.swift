@@ -334,6 +334,11 @@ struct CellDockSettingsView: View {
                 .padding(16)
             }
 
+            settingsSection(title: L10n.tr("蜂窝网络保护")) {
+                CellularLockdownSettingsView(controller: appState.cellularLockdownController)
+                    .padding(16)
+            }
+
             settingsSection(title: L10n.tr("外观与语言")) {
                 VStack(spacing: 0) {
                     settingRow(
@@ -976,6 +981,45 @@ private struct LocalCallAPISettingsView: View {
                 }
                 LocalAgentAPIScopeSettingsView()
                 LocalAgentAPIRemoteSettingsView(controller: controller)
+            }
+        }
+    }
+}
+
+/// Keeps ordinary apps off the cellular interfaces (pf, via the helper).
+private struct CellularLockdownSettingsView: View {
+    @ObservedObject var controller: CellularLockdownController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(verbatim: L10n.tr("蜂窝只走 Tailscale"))
+                        .font(.appBodyStrong)
+                    Text(verbatim: L10n.tr("普通 App 不能直接经模组网卡上网，只有 Tailscale 等系统服务可以。Wi-Fi 断开或隧道重连期间流量会被拦下，不会直接走 4G 出去。"))
+                        .font(.appCaption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if controller.isApplying {
+                    ProgressView().controlSize(.small)
+                }
+                Toggle(L10n.tr("蜂窝只走 Tailscale"), isOn: Binding(
+                    get: { controller.isEnabled },
+                    set: { controller.setEnabled($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.adaptiveGlass)
+            }
+            if let error = controller.error {
+                Text(verbatim: error).font(.caption).foregroundStyle(.red)
+            } else if controller.isEnabled, let message = controller.message {
+                Text(verbatim: message).font(.caption).foregroundStyle(.green)
+            }
+            if controller.isEnabled {
+                Text(verbatim: L10n.tr("需要 Tailscale 开启出口节点，否则走蜂窝时普通 App 都上不了网。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。重启 Mac 后，CellDock 启动时重新生效。"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

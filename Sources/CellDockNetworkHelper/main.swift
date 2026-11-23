@@ -14,6 +14,7 @@ private final class NetworkHelperService: NSObject, CellDockNetworkHelperProtoco
     private let queue = DispatchQueue(label: "app.celldock.mac.network.helper.mutation")
     private let mutator = RootNetworkMutator()
     private let voWiFiHost = VoWiFiHostManager()
+    private let lockdown = CellularLockdownManager()
 
     func ping(reply: @escaping (Int, String) -> Void) {
         reply(CellDockNetworkIPC.protocolVersion, CellDockNetworkIPC.helperIdentity)
@@ -79,6 +80,26 @@ private final class NetworkHelperService: NSObject, CellDockNetworkHelperProtoco
             }
             let result = voWiFiHost.stop(request)
             reply(result.code.rawValue, result.message)
+        }
+    }
+
+    func setCellularLockdown(
+        _ requestData: Data,
+        reply: @escaping (Int, String) -> Void
+    ) {
+        queue.async { [lockdown] in
+            guard let request = try? JSONDecoder().decode(
+                CellularLockdownRequest.self,
+                from: requestData
+            ), request.isValid else {
+                reply(CellDockNetworkResultCode.failure.rawValue, "蜂窝网络限制请求无效。")
+                return
+            }
+            let result = lockdown.apply(request)
+            networkHelperLogger.notice(
+                "Lockdown enabled=\(request.enabled) interfaces=\(request.interfaces.joined(separator: ","), privacy: .public): \(result.1, privacy: .public)"
+            )
+            reply(result.0.rawValue, result.1)
         }
     }
 
