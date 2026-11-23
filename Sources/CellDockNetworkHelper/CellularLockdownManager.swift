@@ -48,7 +48,7 @@ final class CellularLockdownManager {
         }
         storeToken(token)
         saveRequest(request)
-        return (.success, "已限制 \(request.interfaces.joined(separator: ", "))：只允许系统服务（含 Tailscale）出网。")
+        return (.success, "已限制 \(request.interfaces.joined(separator: ", "))：只允许 VPN 和系统服务出网。")
     }
 
     private func disable() -> (CellDockNetworkResultCode, String) {

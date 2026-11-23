@@ -13,7 +13,7 @@ enum CellularEgress: Equatable {
     case cellularDirect(String)
 }
 
-/// "Cellular only through Tailscale": keeps ordinary apps off the modules'
+/// "Cellular only through VPN": keeps ordinary apps off the modules'
 /// network interfaces so they cannot fall back to the cellular link while a
 /// VPN exit node is down or reconnecting. The privileged helper enforces it
 /// with a pf anchor; this controller remembers the choice and re-applies it
@@ -95,7 +95,7 @@ final class CellularLockdownController: ObservableObject {
                     NotificationService.shared.postNetworkNotice(
                         identifier: "cellular-lockdown-blocked",
                         title: L10n.tr("蜂窝网络没有 VPN 出口"),
-                        body: L10n.tr("已开启“蜂窝只走 Tailscale”，但 Tailscale 没有使用出口节点，普通 App 现在无法上网。")
+                        body: L10n.tr("已开启“蜂窝只走 VPN”，但没有 VPN 承载流量，普通 App 现在无法上网。")
                     )
                 }
             }

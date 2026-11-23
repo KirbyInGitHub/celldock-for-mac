@@ -994,9 +994,9 @@ private struct CellularLockdownSettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: L10n.tr("蜂窝只走 Tailscale"))
+                    Text(verbatim: L10n.tr("蜂窝只走 VPN"))
                         .font(.appBodyStrong)
-                    Text(verbatim: L10n.tr("普通 App 不能直接经模组网卡上网，只有 Tailscale 等系统服务可以。Wi-Fi 断开或隧道重连期间流量会被拦下，不会直接走 4G 出去。"))
+                    Text(verbatim: L10n.tr("普通 App 不能直接经模组网卡上网，只有以 root 运行的 VPN（如 Wombat、Tailscale）和系统服务可以。Wi-Fi 断开或隧道重连期间流量会被拦下，不会直接走 4G 出去。"))
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
@@ -1004,7 +1004,7 @@ private struct CellularLockdownSettingsView: View {
                 if controller.isApplying {
                     ProgressView().controlSize(.small)
                 }
-                Toggle(L10n.tr("蜂窝只走 Tailscale"), isOn: Binding(
+                Toggle(L10n.tr("蜂窝只走 VPN"), isOn: Binding(
                     get: { controller.isEnabled },
                     set: { controller.setEnabled($0) }
                 ))
@@ -1026,7 +1026,7 @@ private struct CellularLockdownSettingsView: View {
                 .foregroundStyle(status.color)
             }
             if controller.isEnabled {
-                Text(verbatim: L10n.tr("需要 Tailscale 开启出口节点，否则走蜂窝时普通 App 都上不了网。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。Mac 重启后开机即生效，不用等 CellDock 启动。"))
+                Text(verbatim: L10n.tr("VPN 需要承载全部流量（WireGuard 用 0.0.0.0/0，Tailscale 开出口节点），否则走蜂窝时普通 App 都上不了网。官方 WireGuard App 的隧道以当前用户运行，也会被拦下，请改用 Wombat 等以 root 运行的客户端。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。Mac 重启后开机即生效，不用等 CellDock 启动。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1043,7 +1043,7 @@ private struct CellularLockdownSettingsView: View {
             return (L10n.tr("当前走蜂窝，流量经 VPN 隧道 %@ 出去。", name), "lock.shield", .green)
         case let .cellularDirect(name):
             if controller.isEnabled {
-                return (L10n.tr("当前走蜂窝但没有 VPN 出口，普通 App 无法上网。请在 Tailscale 里选择出口节点。"),
+                return (L10n.tr("当前走蜂窝但没有 VPN 承载流量，普通 App 无法上网。请连上 VPN，并让它承载全部流量。"),
                         "exclamationmark.triangle.fill", .red)
             }
             return (L10n.tr("当前流量直接经蜂窝 %@ 出去。", name), "antenna.radiowaves.left.and.right", .orange)

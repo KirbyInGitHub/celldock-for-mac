@@ -2025,8 +2025,8 @@
 
 /* Cellular lockdown */
 "蜂窝网络保护" = "Cellular Protection";
-"蜂窝只走 Tailscale" = "Cellular through Tailscale only";
-"普通 App 不能直接经模组网卡上网，只有 Tailscale 等系统服务可以。Wi-Fi 断开或隧道重连期间流量会被拦下，不会直接走 4G 出去。" = "Ordinary apps cannot use the module's network interface directly; only system services such as Tailscale can. While Wi-Fi is down or the tunnel reconnects, traffic is blocked instead of leaving over 4G.";
+"蜂窝只走 VPN" = "Cellular Only Through VPN";
+"普通 App 不能直接经模组网卡上网，只有以 root 运行的 VPN（如 Wombat、Tailscale）和系统服务可以。Wi-Fi 断开或隧道重连期间流量会被拦下，不会直接走 4G 出去。" = "Ordinary apps can’t go online directly through the module; only VPNs running as root (such as Wombat or Tailscale) and system services can. While Wi-Fi is down or the tunnel reconnects, traffic is held back instead of leaving over 4G.";
 "连接模组后生效。" = "Takes effect once a module is connected.";
 
 /* Signal, bands, data cap, egress */
@@ -2041,14 +2041,14 @@
 "其他（%lld）" = "Other (%lld)";
 "小区切换" = "Cell changes";
 "已允许频段：%@。模组会重新搜网。" = "Allowed bands: %@. The module will search for a network again.";
-"已开启“蜂窝只走 Tailscale”，但 Tailscale 没有使用出口节点，普通 App 现在无法上网。" = "“Cellular only through Tailscale” is on, but Tailscale is not using an exit node, so ordinary apps have no internet right now.";
+"已开启“蜂窝只走 VPN”，但没有 VPN 承载流量，普通 App 现在无法上网。" = "“Cellular only through VPN” is on, but no VPN is carrying traffic, so ordinary apps have no internet right now.";
 "平均" = "Average";
 "平均 SINR" = "Avg. SINR";
 "应用" = "Apply";
 "当前服务频段" = "Current serving band";
 "当前流量直接经蜂窝 %@ 出去。" = "Traffic is going straight out over cellular (%@).";
 "当前经 %@ 上网，没有使用蜂窝。" = "Online through %@; cellular is not in use.";
-"当前走蜂窝但没有 VPN 出口，普通 App 无法上网。请在 Tailscale 里选择出口节点。" = "On cellular with no VPN exit, so ordinary apps have no internet. Choose an exit node in Tailscale.";
+"当前走蜂窝但没有 VPN 承载流量，普通 App 无法上网。请连上 VPN，并让它承载全部流量。" = "On cellular with no VPN carrying traffic, so ordinary apps have no internet. Connect a VPN that carries all traffic.";
 "当前走蜂窝，流量经 VPN 隧道 %@ 出去。" = "On cellular; traffic leaves through the VPN tunnel %@.";
 "恢复全部频段" = "Restore All Bands";
 "最低" = "Lowest";
@@ -2066,5 +2066,5 @@
 "还没有记录。CellDock 每分钟读取一次服务小区，几分钟后这里会出现曲线。" = "Nothing recorded yet. CellDock reads the serving cell once a minute, so a chart appears here after a few minutes.";
 "重新读取" = "Read Again";
 "锁定到信号最好的频段可以减少模组在弱频段之间来回切换。中国电信 4G 常用 B1、B3、B5。选错频段会断网，可随时恢复全部频段。" = "Locking to the strongest band stops the module hopping between weak ones. China Telecom 4G mostly uses B1, B3 and B5. The wrong band drops the connection; you can restore all bands at any time.";
-"需要 Tailscale 开启出口节点，否则走蜂窝时普通 App 都上不了网。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。Mac 重启后开机即生效，不用等 CellDock 启动。" = "Tailscale needs an exit node, or ordinary apps have no internet on cellular. Diagnostics connectivity checks will fail; system services running as root (including VoWiFi) are not restricted. After a restart it takes effect at boot, before CellDock opens.";
+"VPN 需要承载全部流量（WireGuard 用 0.0.0.0/0，Tailscale 开出口节点），否则走蜂窝时普通 App 都上不了网。官方 WireGuard App 的隧道以当前用户运行，也会被拦下，请改用 Wombat 等以 root 运行的客户端。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。Mac 重启后开机即生效，不用等 CellDock 启动。" = "The VPN must carry all traffic (0.0.0.0/0 for WireGuard, an exit node for Tailscale), or ordinary apps have no internet on cellular. The official WireGuard app runs its tunnel as your user, so it is blocked too; use a client that runs as root, such as Wombat. Diagnostics connectivity checks will fail; system services running as root (including VoWiFi) are not restricted. After a restart it takes effect at boot, before CellDock opens.";
 "频段与制式" = "Bands & Network Mode";
