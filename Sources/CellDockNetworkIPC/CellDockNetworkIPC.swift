@@ -28,7 +28,9 @@ public enum CellDockModemNetworkIdentity {
         // Quectel QDC507.
         USBIdentity(vendorID: 0x2C7C, productID: 0x0125),
         // Quectel RM520N-GL in ECM mode (usbnet 1).
-        USBIdentity(vendorID: 0x2C7C, productID: 0x0801)
+        USBIdentity(vendorID: 0x2C7C, productID: 0x0801),
+        // QDC507 kept on its original DJI identity.
+        USBIdentity(vendorID: 0x2CA3, productID: 0x4006)
     ]
 
     /// Fragments of the vendor or product name that SCPreferences keeps for a

@@ -455,7 +455,7 @@ final class ModemService {
     func recoverCellularNetworkLink(completion: @escaping (ModemActionResult) -> Void) {
         queue.async { [weak self] in
             guard let self, self.isOpen,
-                  self.snapshot.usbIdentity?.uppercased() == "2C7C:0125",
+                  ["2C7C:0125", "2CA3:4006"].contains(self.snapshot.usbIdentity?.uppercased() ?? ""),
                   self.snapshot.usbNetMode == 1,
                   self.modemLocationID != 0 else {
                 DispatchQueue.main.async {
@@ -1162,8 +1162,11 @@ final class ModemService {
                 self.switchRM520NToECM(completion: completion)
                 return
             }
-            guard celldock_modem_vendor_id(modem) == 0x2C7C,
-                  celldock_modem_product_id(modem) == 0x0125,
+            let isQuectelIdentity = celldock_modem_vendor_id(modem) == 0x2C7C &&
+                celldock_modem_product_id(modem) == 0x0125
+            let isDJIIdentity = celldock_modem_vendor_id(modem) == 0x2CA3 &&
+                celldock_modem_product_id(modem) == 0x4006
+            guard isQuectelIdentity || isDJIIdentity,
                   self.connectedModemMatchesExpectedIdentity() else {
                 DispatchQueue.main.async {
                     completion(.failure(L10n.tr("当前 AT 接口不是已锁定的 2C7C:0125 模块，未执行配置。")))
@@ -1199,7 +1202,10 @@ final class ModemService {
                 }
                 return
             }
+            // A DJI-identity module is only ever switched to ECM; its USBCFG is
+            // never rewritten, so it keeps the DJI identity.
             let mayWriteFullConfiguration = currentConfiguration.isCellDockTarget ||
+                currentConfiguration.isDJIFullConfiguration ||
                 (self.snapshot.hardwareFamily == .quectelNativeVoice &&
                     currentConfiguration.isSafeQuectelSource)
             guard mayWriteFullConfiguration else {
@@ -1224,7 +1230,7 @@ final class ModemService {
             let nativeConfigurationIsReady =
                 self.snapshot.hardwareFamily == .quectelNativeVoice &&
                 currentConfiguration.supportsNativeQuectelRuntime
-            let needsConfigurationWrite = !currentConfiguration.isCellDockTarget &&
+            let needsConfigurationWrite = !currentConfiguration.providesCellDockInterfaces &&
                 !nativeConfigurationIsReady
             guard needsUSBNetWrite || needsConfigurationWrite else {
                 DispatchQueue.main.async {

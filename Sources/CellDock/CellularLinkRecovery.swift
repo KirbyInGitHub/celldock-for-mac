@@ -28,7 +28,7 @@ enum CellularLinkRecoveryPolicy {
     /// inheriting commands meant for different firmware.
     static func repairStrategy(for modem: ModemSnapshot) -> CellularLinkRepairStrategy? {
         switch modem.usbIdentity?.uppercased() {
-        case "2C7C:0125": return .moduleBridge
+        case "2C7C:0125", "2CA3:4006": return .moduleBridge
         case "2C7C:0801": return .moduleRestart
         default: return nil
         }

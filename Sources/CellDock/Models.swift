@@ -284,6 +284,19 @@ struct ModemUSBConfiguration: Equatable {
         self == Self.cellDockFullTarget
     }
 
+    /// The original DJI identity with every interface CellDock needs already
+    /// enabled (DJOneHub's call mode leaves the module like this). CellDock
+    /// uses it as-is instead of converting the module to 2C7C:0125.
+    var isDJIFullConfiguration: Bool {
+        vendorID == 0x2CA3 && productID == 0x4006 &&
+            diagnosticEnabled && nmeaEnabled && atPortEnabled && modemEnabled && networkEnabled &&
+            adbEnabled && audioEnabled
+    }
+
+    var providesCellDockInterfaces: Bool {
+        isCellDockTarget || isDJIFullConfiguration
+    }
+
     var isSafeQuectelSource: Bool {
         vendorID == 0x2C7C && productID == 0x0125 && atPortEnabled
     }
@@ -690,6 +703,14 @@ struct ModemSnapshot: Equatable {
         if normalizedIdentity == "2CA3:4006" {
             guard let usbConfiguration else {
                 return .unsupportedIdentity(normalizedIdentity)
+            }
+            if usbConfiguration.isDJIFullConfiguration {
+                guard let usbNetMode else { return .inspecting }
+                switch usbNetMode {
+                case 0: return .needsECM
+                case 1: return .ready
+                default: return .unsupportedUSBNetMode(usbNetMode)
+                }
             }
             if usbConfiguration.isSafeIdentityConversionSource {
                 return .needsIdentityConversion

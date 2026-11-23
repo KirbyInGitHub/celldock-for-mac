@@ -215,6 +215,14 @@ cp "$ROOT/Resources/app.celldock.mac.network.helper.plist" "$STAGE_APP/$PLIST_RE
 ditto "$SPARKLE_FRAMEWORK_SOURCE" "$STAGE_APP/$SPARKLE_FRAMEWORK_RELATIVE"
 
 xattr -cr "$STAGE_APP"
+APP_ENTITLEMENTS="$ROOT/Resources/CellDock.entitlements"
+if [[ "$SIGNING_MODE" == community ]]; then
+  # A self-signed certificate has no Team ID, so library validation would
+  # refuse the bundled Sparkle framework under the hardened runtime.
+  APP_ENTITLEMENTS="$STAGE_DIR/CellDock-community.entitlements"
+  cp "$ROOT/Resources/CellDock.entitlements" "$APP_ENTITLEMENTS"
+  /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "$APP_ENTITLEMENTS"
+fi
 SPARKLE_FRAMEWORK="$STAGE_APP/$SPARKLE_FRAMEWORK_RELATIVE"
 SPARKLE_VERSION="$SPARKLE_FRAMEWORK/Versions/B"
 codesign \
@@ -268,7 +276,7 @@ codesign \
   "${CODESIGN_OPTIONS[@]}" \
   "${APP_REQUIREMENT_OPTIONS[@]}" \
   --identifier app.celldock.mac \
-  --entitlements "$ROOT/Resources/CellDock.entitlements" \
+  --entitlements "$APP_ENTITLEMENTS" \
   "$STAGE_APP"
 codesign --verify --deep --strict --verbose=2 "$STAGE_APP"
 
