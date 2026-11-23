@@ -7,14 +7,28 @@ import CellDockNetworkIPC
 /// The anchor lives under `com.apple/`, which the stock /etc/pf.conf already
 /// evaluates, so the system ruleset is never rewritten. pf is enabled with a
 /// reference token (`pfctl -E`) and released with `pfctl -X`, which leaves pf
-/// running if anything else on the Mac also enabled it. Rules do not survive a
-/// reboot; the app re-applies them on launch.
+/// running if anything else on the Mac also enabled it. pf rules do not
+/// survive a reboot, so the last request is kept on disk and the helper, which
+/// launchd starts at boot, loads it again before anyone logs in.
 final class CellularLockdownManager {
     static let anchor = "com.apple/celldock.lockdown"
 
     private let tokenURL = URL(
         fileURLWithPath: "/Library/Application Support/CellDock/pf-lockdown-token"
     )
+    private let requestURL = URL(
+        fileURLWithPath: "/Library/Application Support/CellDock/pf-lockdown.json"
+    )
+
+    /// Re-applies the saved lockdown. Called once when the helper starts.
+    func restoreSavedLockdown() -> (CellDockNetworkResultCode, String)? {
+        guard let data = try? Data(contentsOf: requestURL),
+              let request = try? JSONDecoder().decode(CellularLockdownRequest.self, from: data),
+              request.isValid, request.enabled, !request.interfaces.isEmpty else {
+            return nil
+        }
+        return apply(request)
+    }
 
     func apply(_ request: CellularLockdownRequest) -> (CellDockNetworkResultCode, String) {
         guard request.enabled, !request.interfaces.isEmpty else {
@@ -33,6 +47,7 @@ final class CellularLockdownManager {
             _ = run(["-X", previous])
         }
         storeToken(token)
+        saveRequest(request)
         return (.success, "已限制 \(request.interfaces.joined(separator: ", "))：只允许系统服务（含 Tailscale）出网。")
     }
 
@@ -42,6 +57,7 @@ final class CellularLockdownManager {
             _ = run(["-X", token])
             try? FileManager.default.removeItem(at: tokenURL)
         }
+        try? FileManager.default.removeItem(at: requestURL)
         guard flush.status == 0 else {
             return (.failure, "pf 规则清除失败：\(flush.output)")
         }
@@ -76,6 +92,16 @@ final class CellularLockdownManager {
             return nil
         }
         return value
+    }
+
+    private func saveRequest(_ request: CellularLockdownRequest) {
+        guard let data = try? JSONEncoder().encode(request) else { return }
+        try? FileManager.default.createDirectory(
+            at: requestURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: 0o700)]
+        )
+        try? data.write(to: requestURL, options: .atomic)
     }
 
     private func storeToken(_ token: String) {

@@ -6271,6 +6271,29 @@ do {
     try expect(relaySessionsDrained(), "a session lingered after the upstream and the client closed")
     relayServer.stop()
 
+    // Radio control: LTE band masks past 64 bits, QTEMP and scan mode.
+    let bandConfig = ModuleBandConfiguration.parse("+QCFG: \"band\",0xbff,0x42000001e20b0e18df,0x0\r\n\r\nOK")
+    try expect(
+        bandConfig?.lte.bands == [1, 2, 3, 4, 5, 7, 8, 12, 13, 18, 19, 20, 25, 26, 28, 34, 38, 39, 40, 41, 66, 71],
+        "EG25-G LTE band mask was not decoded"
+    )
+    try expect(bandConfig?.lte.hex == "0x42000001e20b0e18df", "LTE band mask did not round-trip")
+    try expect(
+        bandConfig?.writeCommand(lte: [1, 3, 5]) == "AT+QCFG=\"band\",bff,15,0,1",
+        "band lock command changed the GSM/TDS masks or LTE encoding"
+    )
+    try expect(LTEBandMask(hex: "0xZZ") == nil && LTEBandMask(bands: []).hex == "0x0", "invalid band masks")
+    try expect(
+        ModuleTemperature.parse("+QTEMP: 37,31,30\r\nOK").map(\.celsius) == [37, 31, 30],
+        "EG25-G QTEMP was not parsed"
+    )
+    try expect(
+        ModuleTemperature.parse("+QTEMP:\"modem-lte-sub6-pa1\",\"41\"\r\n+QTEMP:\"aoss-0-usr\",\"-273\"\r\nOK")
+            == [ModuleTemperature.Reading(name: "modem-lte-sub6-pa1", celsius: 41)],
+        "named QTEMP sensors were not parsed or placeholders kept"
+    )
+    try expect(ModuleScanMode.parse("+QCFG: \"nwscanmode\",3\r\n\r\nOK") == 3, "nwscanmode parse")
+
     print("CellDock self-tests passed (calls, PDU/UDH, SOCKS5 relay, VoWiFi, link recovery, buffering, storage, merge).")
 } catch {
     fputs("Self-test failed: \(error)\n", stderr)

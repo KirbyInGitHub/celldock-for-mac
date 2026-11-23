@@ -171,6 +171,18 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         ))
     }
 
+    /// Network status the user should act on, such as a used-up data plan or
+    /// cellular traffic that has nowhere to go. Reposting replaces the old one.
+    func postNetworkNotice(identifier: String, title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.threadIdentifier = "app.celldock.network"
+        content.interruptionLevel = .active
+        center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+    }
+
     func clearSensitiveNotifications() {
         center.removeAllDeliveredNotifications()
         center.removeAllPendingNotificationRequests()

@@ -16,6 +16,17 @@ private final class NetworkHelperService: NSObject, CellDockNetworkHelperProtoco
     private let voWiFiHost = VoWiFiHostManager()
     private let lockdown = CellularLockdownManager()
 
+    /// launchd starts the helper at boot (RunAtLoad), so a saved lockdown is
+    /// back in force before CellDock or any other app runs.
+    func restoreAtLaunch() {
+        queue.async { [lockdown] in
+            guard let result = lockdown.restoreSavedLockdown() else { return }
+            networkHelperLogger.notice(
+                "Restored lockdown at launch: \(result.1, privacy: .public)"
+            )
+        }
+    }
+
     func ping(reply: @escaping (Int, String) -> Void) {
         reply(CellDockNetworkIPC.protocolVersion, CellDockNetworkIPC.helperIdentity)
     }
@@ -122,7 +133,7 @@ private final class NetworkHelperService: NSObject, CellDockNetworkHelperProtoco
 }
 
 private final class NetworkHelperListenerDelegate: NSObject, NSXPCListenerDelegate {
-    private let service = NetworkHelperService()
+    let service = NetworkHelperService()
 
     func listener(
         _ listener: NSXPCListener,
@@ -249,5 +260,6 @@ _ = umask(S_IRWXG | S_IRWXO)
 private let delegate = NetworkHelperListenerDelegate()
 let listener = NSXPCListener(machServiceName: CellDockNetworkIPC.helperLabel)
 listener.delegate = delegate
+delegate.service.restoreAtLaunch()
 listener.resume()
 RunLoop.current.run()

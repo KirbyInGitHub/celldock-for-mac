@@ -82,9 +82,32 @@ struct NetworkDiagnosticsView: View {
     }
 }
 
+private enum SignalRange: String, CaseIterable, Identifiable {
+    case sixHours, day, week
+
+    var id: String { rawValue }
+    var seconds: TimeInterval {
+        switch self {
+        case .sixHours: return 6 * 3600
+        case .day: return 24 * 3600
+        case .week: return 7 * 24 * 3600
+        }
+    }
+    var title: String {
+        switch self {
+        case .sixHours: return L10n.tr("6 小时")
+        case .day: return L10n.tr("24 小时")
+        case .week: return L10n.tr("7 天")
+        }
+    }
+}
+
 private struct NetworkDiagnosticsDetailView: View {
     let module: CellularModuleSummary
     @ObservedObject var controller: NetworkDiagnosticsController
+    @State private var signalRange = SignalRange.day
+    @State private var selectedBands: Set<Int>?
+    @State private var dataCapText = ""
 
     var body: some View {
         ScrollView {
@@ -110,6 +133,8 @@ private struct NetworkDiagnosticsDetailView: View {
                         checksCard(result)
                         radioCard(result)
                     }
+                    signalCard
+                    bandCard
                     trafficCard
                 }
             }
@@ -119,6 +144,214 @@ private struct NetworkDiagnosticsDetailView: View {
         .onAppear {
             if result == nil { controller.runDiagnostics(for: module) }
         }
+        .task(id: module.id) {
+            selectedBands = nil
+            dataCapText = controller.dataCapGB(for: module)
+                .map { $0.formatted(.number.precision(.fractionLength(0...1)).grouping(.never)) } ?? ""
+            controller.loadRadio(for: module)
+        }
+    }
+
+    private var radioState: ModuleRadioState? { controller.radio[module.id] }
+
+    // MARK: Signal history
+
+    private var signalCard: some View {
+        let samples = controller.signalHistory(for: module, since: Date().addingTimeInterval(-signalRange.seconds))
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(L10n.tr("信号记录"), systemImage: "waveform.path.ecg").font(.appHeadline)
+                Spacer()
+                Picker("", selection: $signalRange) {
+                    ForEach(SignalRange.allCases) { Text(verbatim: $0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            if samples.isEmpty {
+                Text(verbatim: L10n.tr("还没有记录。CellDock 每分钟读取一次服务小区，几分钟后这里会出现曲线。"))
+                    .font(.appCallout).foregroundStyle(.secondary)
+            } else {
+                signalSummary(samples)
+                Chart {
+                    RuleMark(y: .value("RSRP", -100))
+                        .foregroundStyle(.orange.opacity(0.5))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    ForEach(samples) { sample in
+                        LineMark(x: .value(L10n.tr("时间"), sample.timestamp),
+                                 y: .value("RSRP", sample.rsrp))
+                            .interpolationMethod(.monotone)
+                        PointMark(x: .value(L10n.tr("时间"), sample.timestamp),
+                                  y: .value("RSRP", sample.rsrp))
+                            .symbolSize(samples.count > 60 ? 0 : 16)
+                    }
+                }
+                .chartYAxisLabel("RSRP dBm")
+                .chartYScale(domain: .automatic(includesZero: false))
+                .frame(height: 150)
+                let sinrSamples = samples.filter { $0.sinr != nil }
+                if !sinrSamples.isEmpty {
+                    Chart(sinrSamples) { sample in
+                        LineMark(x: .value(L10n.tr("时间"), sample.timestamp),
+                                 y: .value("SINR", sample.sinr ?? 0))
+                            .foregroundStyle(.teal)
+                            .interpolationMethod(.monotone)
+                        PointMark(x: .value(L10n.tr("时间"), sample.timestamp),
+                                  y: .value("SINR", sample.sinr ?? 0))
+                            .foregroundStyle(.teal)
+                            .symbolSize(sinrSamples.count > 60 ? 0 : 16)
+                    }
+                    .chartYAxisLabel("SINR dB")
+                    .chartYScale(domain: .automatic(includesZero: false))
+                    .frame(height: 90)
+                }
+            }
+            HStack {
+                Text(verbatim: L10n.tr("虚线是 -100 dBm，低于它信号偏弱。记录保留 7 天，只存在这台 Mac。"))
+                    .font(.appCaption).foregroundStyle(.secondary)
+                Spacer()
+                Button(L10n.tr("清除记录")) { controller.clearSignalHistory(for: module) }
+                    .adaptiveGlassButton()
+                    .disabled(samples.isEmpty)
+            }
+        }
+        .adaptiveGlassSurface(cornerRadius: 18, padding: 16, treatment: .regular)
+    }
+
+    private func signalSummary(_ samples: [SignalSample]) -> some View {
+        let rsrps = samples.map(\.rsrp)
+        let average = rsrps.reduce(0, +) / max(1, rsrps.count)
+        let sinrs = samples.compactMap(\.sinr)
+        let cellChanges = zip(samples, samples.dropFirst()).filter { $0.cellID != $1.cellID }.count
+        let bands = Array(Set(samples.compactMap(\.band))).sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
+        return HStack(spacing: 24) {
+            stat(L10n.tr("当前"), "\(rsrps.last ?? 0) dBm")
+            stat(L10n.tr("平均"), "\(average) dBm")
+            stat(L10n.tr("最低"), "\((rsrps.min() ?? 0)) dBm")
+            if !sinrs.isEmpty {
+                stat(L10n.tr("平均 SINR"), "\(sinrs.reduce(0, +) / sinrs.count) dB")
+            }
+            stat(L10n.tr("小区切换"), "\(cellChanges)")
+            if !bands.isEmpty {
+                stat(L10n.tr("频段"), bands.map { "B\($0)" }.joined(separator: " "))
+            }
+        }
+    }
+
+    private func stat(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: title).font(.appCaption).foregroundStyle(.secondary)
+            Text(verbatim: value).font(.appBodyStrong.monospacedDigit())
+        }
+    }
+
+    // MARK: Bands, scan mode, temperature
+
+    private var bandCard: some View {
+        let state = radioState
+        let current = state?.bands?.lte.bands ?? []
+        let available = (controller.originalBands(for: module) ?? current).union(current).sorted()
+        let selection = selectedBands ?? current
+        let servingBand = (result?.servingCell?.band
+            ?? controller.signalHistory(for: module, since: Date().addingTimeInterval(-300)).last?.band)
+            .flatMap(Int.init)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(L10n.tr("频段与制式"), systemImage: "dial.medium").font(.appHeadline)
+                Spacer()
+                if state?.isBusy == true { ProgressView().controlSize(.small) }
+                Button {
+                    controller.loadRadio(for: module)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .adaptiveGlassButton()
+                .help(L10n.tr("重新读取"))
+            }
+            if let scanMode = state?.scanMode {
+                HStack {
+                    Text(verbatim: L10n.tr("网络制式")).foregroundStyle(.secondary)
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { ModuleScanMode(rawValue: scanMode) },
+                        set: { if let mode = $0 { controller.setScanMode(mode, for: module) } }
+                    )) {
+                        if ModuleScanMode(rawValue: scanMode) == nil {
+                            Text(verbatim: L10n.tr("其他（%lld）", Int64(scanMode))).tag(ModuleScanMode?.none)
+                        }
+                        ForEach(ModuleScanMode.allCases) { Text(verbatim: $0.localizedTitle).tag(Optional($0)) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .disabled(state?.isBusy == true)
+                }
+                .font(.appCallout)
+            }
+            if !available.isEmpty {
+                Text(verbatim: L10n.tr("允许的 LTE 频段"))
+                    .font(.appCallout).foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 58), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(available, id: \.self) { band in
+                        bandChip(band, isOn: selection.contains(band), isServing: band == servingBand) {
+                            var updated = selection
+                            if updated.contains(band) { updated.remove(band) } else { updated.insert(band) }
+                            selectedBands = updated
+                        }
+                    }
+                }
+                HStack {
+                    Button(L10n.tr("应用")) {
+                        controller.setLTEBands(selection, for: module)
+                        selectedBands = nil
+                    }
+                    .adaptiveGlassButton()
+                    .disabled(selection.isEmpty || selection == current || state?.isBusy == true)
+                    if let original = controller.originalBands(for: module), original != current {
+                        Button(L10n.tr("恢复全部频段")) {
+                            controller.setLTEBands(original, for: module)
+                            selectedBands = nil
+                        }
+                        .adaptiveGlassButton()
+                        .disabled(state?.isBusy == true)
+                    }
+                    Spacer()
+                }
+                Text(verbatim: L10n.tr("锁定到信号最好的频段可以减少模组在弱频段之间来回切换。中国电信 4G 常用 B1、B3、B5。选错频段会断网，可随时恢复全部频段。"))
+                    .font(.appCaption).foregroundStyle(.secondary)
+            } else if state != nil {
+                Text(verbatim: L10n.tr("模组没有返回频段配置。"))
+                    .font(.appCallout).foregroundStyle(.secondary)
+            }
+            if let temperatures = state?.temperatures, !temperatures.isEmpty {
+                row(L10n.tr("模组温度"), temperatures.map { "\($0.name) \($0.celsius)°C" }.joined(separator: " · "))
+            }
+            if let message = state?.message {
+                Text(verbatim: message).font(.appCaption).foregroundStyle(.green)
+            }
+            if let error = state?.error {
+                Text(verbatim: error).font(.appCaption).foregroundStyle(.red)
+            }
+        }
+        .adaptiveGlassSurface(cornerRadius: 18, padding: 16, treatment: .regular)
+    }
+
+    private func bandChip(_ band: Int, isOn: Bool, isServing: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if isServing { Image(systemName: "antenna.radiowaves.left.and.right").font(.appCaption) }
+                Text(verbatim: "B\(band)").font(.appCallout.weight(.semibold).monospacedDigit())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(isOn ? Color.accentColor.opacity(0.85) : Color.secondary.opacity(0.1),
+                        in: RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(isOn ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(isServing ? L10n.tr("当前服务频段") : "")
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     private var result: ModuleDiagnostics? { controller.diagnostics[module.id] }
@@ -228,10 +461,44 @@ private struct NetworkDiagnosticsDetailView: View {
             }
             .chartYAxisLabel("MB")
             .frame(height: 180)
+            dataCapRow(used: month.received + month.sent)
             Text(verbatim: L10n.tr("按模组网卡的收发字节统计，CellDock 运行时才记录，只保存在这台 Mac；运营商账单以运营商为准。"))
                 .font(.appCaption).foregroundStyle(.secondary)
         }
         .adaptiveGlassSurface(cornerRadius: 18, padding: 16, treatment: .regular)
+    }
+
+    private func dataCapRow(used: UInt64) -> some View {
+        let cap = controller.dataCapGB(for: module)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(verbatim: L10n.tr("每月套餐")).foregroundStyle(.secondary)
+                Spacer()
+                TextField(L10n.tr("不限"), text: $dataCapText)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 80)
+                    .onSubmit(saveDataCap)
+                Text(verbatim: "GB").foregroundStyle(.secondary)
+                Button(L10n.tr("保存"), action: saveDataCap).adaptiveGlassButton()
+            }
+            .font(.appCallout)
+            if let cap {
+                let limit = cap * 1_073_741_824
+                ProgressView(value: min(Double(used), limit), total: limit)
+                    .tint(Double(used) >= limit ? .red : Double(used) >= limit * 0.8 ? .orange : .accentColor)
+                Text(verbatim: L10n.tr("本月已用 %lld%%，到 80%% 和用完时各提醒一次。",
+                                       Int64((Double(used) / limit * 100).rounded())))
+                    .font(.appCaption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func saveDataCap() {
+        let trimmed = dataCapText.trimmingCharacters(in: .whitespaces)
+        let value = Double(trimmed.replacingOccurrences(of: ",", with: "."))
+        controller.setDataCapGB(value, for: module)
+        if value == nil || value ?? 0 <= 0 { dataCapText = "" }
     }
 
     private func total(_ title: String, _ bytes: UInt64) -> some View {

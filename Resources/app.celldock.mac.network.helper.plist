@@ -13,6 +13,8 @@
         <key>app.celldock.mac.network.helper</key>
         <true/>
     </dict>
+    <key>RunAtLoad</key>
+    <true/>
     <key>ProcessType</key>
     <string>Interactive</string>
     <key>ThrottleInterval</key>

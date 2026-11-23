@@ -262,8 +262,10 @@ struct NetworkHelperInstaller {
             "MachServices",
             "ProcessType",
             "ProgramArguments",
+            "RunAtLoad",
             "ThrottleInterval"
         ]),
+        plist["RunAtLoad"] as? Bool == true,
         plist["Label"] as? String == CellDockNetworkIPC.helperLabel,
         plist["ProcessType"] as? String == "Interactive",
         plist["ProgramArguments"] as? [String] == [

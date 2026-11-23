@@ -1016,11 +1016,37 @@ private struct CellularLockdownSettingsView: View {
             } else if controller.isEnabled, let message = controller.message {
                 Text(verbatim: message).font(.caption).foregroundStyle(.green)
             }
+            if let status = egressStatus {
+                Label {
+                    Text(verbatim: status.text)
+                } icon: {
+                    Image(systemName: status.symbol)
+                }
+                .font(.caption)
+                .foregroundStyle(status.color)
+            }
             if controller.isEnabled {
-                Text(verbatim: L10n.tr("需要 Tailscale 开启出口节点，否则走蜂窝时普通 App 都上不了网。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。重启 Mac 后，CellDock 启动时重新生效。"))
+                Text(verbatim: L10n.tr("需要 Tailscale 开启出口节点，否则走蜂窝时普通 App 都上不了网。诊断页的连通性检测会失败；以 root 运行的系统服务（含 VoWiFi）不受限制。Mac 重启后开机即生效，不用等 CellDock 启动。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var egressStatus: (text: String, symbol: String, color: Color)? {
+        switch controller.egress {
+        case .unknown:
+            return nil
+        case let .other(name):
+            return (L10n.tr("当前经 %@ 上网，没有使用蜂窝。", name), "wifi", .secondary)
+        case let .cellularViaTunnel(name):
+            return (L10n.tr("当前走蜂窝，流量经 VPN 隧道 %@ 出去。", name), "lock.shield", .green)
+        case let .cellularDirect(name):
+            if controller.isEnabled {
+                return (L10n.tr("当前走蜂窝但没有 VPN 出口，普通 App 无法上网。请在 Tailscale 里选择出口节点。"),
+                        "exclamationmark.triangle.fill", .red)
+            }
+            return (L10n.tr("当前流量直接经蜂窝 %@ 出去。", name), "antenna.radiowaves.left.and.right", .orange)
         }
     }
 }

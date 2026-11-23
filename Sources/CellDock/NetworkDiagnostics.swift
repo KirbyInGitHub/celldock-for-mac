@@ -65,6 +65,15 @@ struct ConnectivityCheck: Equatable, Identifiable {
     let detail: String
 }
 
+struct ModuleRadioState: Equatable {
+    var bands: ModuleBandConfiguration?
+    var scanMode: Int?
+    var temperatures: [ModuleTemperature.Reading] = []
+    var isBusy = false
+    var message: String?
+    var error: String?
+}
+
 struct ModuleDiagnostics: Equatable {
     var servingCell: ServingCellInfo?
     var pdpContexts: String?
@@ -78,16 +87,25 @@ struct ModuleDiagnostics: Equatable {
 final class NetworkDiagnosticsController: ObservableObject {
     @Published private(set) var traffic: [TrafficDay] = []
     @Published private(set) var diagnostics: [CellularModuleID: ModuleDiagnostics] = [:]
+    @Published private(set) var signalSamples: [SignalSample] = []
+    @Published private(set) var radio: [CellularModuleID: ModuleRadioState] = [:]
+    @Published private(set) var dataCapRevision = 0
 
     private weak var appState: AppState?
     private var timer: Timer?
     private var lastCounters: [String: NetworkInterfaceByteCounters] = [:]
     private var lastSave = Date.distantPast
+    private var signalTimer: Timer?
+    private var signalInFlight: Set<CellularModuleID> = []
+    private var lastSignalSave = Date.distantPast
     private static let sampleInterval: TimeInterval = 5
+    private static let signalInterval: TimeInterval = 60
+    private static let signalRetention: TimeInterval = 7 * 24 * 3600
 
     init(appState: AppState) {
         self.appState = appState
         traffic = Self.loadTraffic()
+        signalSamples = Self.loadSignal()
     }
 
     var availableModules: [CellularModuleSummary] {
@@ -101,12 +119,22 @@ final class NetworkDiagnosticsController: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+
+        let signalTimer = Timer(timeInterval: Self.signalInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sampleSignal() }
+        }
+        RunLoop.main.add(signalTimer, forMode: .common)
+        self.signalTimer = signalTimer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.sampleSignal() }
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        signalTimer?.invalidate()
+        signalTimer = nil
         saveTraffic()
+        saveSignal()
     }
 
     // MARK: - Traffic
@@ -162,6 +190,181 @@ final class NetworkDiagnosticsController: ObservableObject {
             }
         }
         if Date().timeIntervalSince(lastSave) > 60 { saveTraffic() }
+        checkDataCaps()
+    }
+
+    // MARK: - Data cap
+
+    private static func dataCapKey(_ trafficKey: String) -> String { "CellDock.dataCapGB.\(trafficKey)" }
+    private static func dataCapAlertKey(_ trafficKey: String) -> String { "CellDock.dataCapAlert.\(trafficKey)" }
+
+    /// Monthly plan allowance in GB, or nil when none is set.
+    func dataCapGB(for module: CellularModuleSummary) -> Double? {
+        _ = dataCapRevision
+        let value = UserDefaults.standard.double(forKey: Self.dataCapKey(Self.trafficKey(for: module)))
+        return value > 0 ? value : nil
+    }
+
+    func setDataCapGB(_ value: Double?, for module: CellularModuleSummary) {
+        let key = Self.trafficKey(for: module)
+        if let value, value > 0 {
+            UserDefaults.standard.set(value, forKey: Self.dataCapKey(key))
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.dataCapKey(key))
+        }
+        UserDefaults.standard.removeObject(forKey: Self.dataCapAlertKey(key))
+        dataCapRevision += 1
+        checkDataCaps()
+    }
+
+    /// Notifies once per month at 80% and once at 100% of the allowance.
+    private func checkDataCaps() {
+        let month = String(Self.dayString(Date()).prefix(7))
+        for module in availableModules {
+            guard let cap = dataCapGB(for: module) else { continue }
+            let key = Self.trafficKey(for: module)
+            let total = monthTotal(for: module)
+            let used = Double(total.received + total.sent)
+            let limit = cap * 1_073_741_824
+            let level = used >= limit ? 100 : used >= limit * 0.8 ? 80 : 0
+            guard level > 0 else { continue }
+            let marker = "\(month):\(level)"
+            let previous = UserDefaults.standard.string(forKey: Self.dataCapAlertKey(key)) ?? ""
+            guard previous != marker, !(previous.hasPrefix(month) && previous.hasSuffix(":100")) else { continue }
+            UserDefaults.standard.set(marker, forKey: Self.dataCapAlertKey(key))
+            let usedText = NetworkSpeedFormatter.byteCount(UInt64(used))
+            NotificationService.shared.postNetworkNotice(
+                identifier: "data-cap-\(key)",
+                title: level == 100 ? L10n.tr("本月蜂窝流量已用完") : L10n.tr("本月蜂窝流量已用 80%"),
+                body: L10n.tr("%@ 本月已用 %@，套餐 %@ GB。", module.localizedDisplayName, usedText,
+                              cap.formatted(.number.precision(.fractionLength(0...1))))
+            )
+        }
+    }
+
+    // MARK: - Signal history
+
+    func signalHistory(for module: CellularModuleSummary, since: Date) -> [SignalSample] {
+        let key = Self.trafficKey(for: module)
+        return signalSamples.filter { $0.module == key && $0.timestamp >= since }
+    }
+
+    func clearSignalHistory(for module: CellularModuleSummary) {
+        let key = Self.trafficKey(for: module)
+        signalSamples.removeAll { $0.module == key }
+        saveSignal()
+    }
+
+    /// Reads the serving cell once a minute so a weak or changing cell shows
+    /// up later in the chart, even while this page is closed.
+    private func sampleSignal() {
+        guard let appState else { return }
+        for module in availableModules where module.modem.registrationState.hasService {
+            let moduleID = module.id
+            guard !signalInFlight.contains(moduleID) else { continue }
+            signalInFlight.insert(moduleID)
+            let key = Self.trafficKey(for: module)
+            appState.runFeatureAT("AT+QENG=\"servingcell\"", via: moduleID) { [weak self] result in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.signalInFlight.remove(moduleID)
+                    guard let cell = ServingCellInfo.parse(result.output), let rsrp = cell.rsrp,
+                          (-140 ... -44).contains(rsrp) else { return }
+                    self.signalSamples.append(SignalSample(
+                        module: key, timestamp: Date(), rsrp: rsrp, sinr: cell.sinr,
+                        rsrq: cell.rsrq, band: cell.band, cellID: cell.cellID
+                    ))
+                    if Date().timeIntervalSince(self.lastSignalSave) > 600 { self.saveSignal() }
+                }
+            }
+        }
+    }
+
+    private static var signalURL: URL {
+        AppDataDirectory.userApplicationSupport().appendingPathComponent("signal-history.json")
+    }
+
+    private static func loadSignal() -> [SignalSample] {
+        guard let data = try? Data(contentsOf: signalURL) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([SignalSample].self, from: data)) ?? []
+    }
+
+    private func saveSignal() {
+        lastSignalSave = Date()
+        let cutoff = Date().addingTimeInterval(-Self.signalRetention)
+        signalSamples.removeAll { $0.timestamp < cutoff }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(signalSamples) else { return }
+        try? FileManager.default.createDirectory(
+            at: Self.signalURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try? data.write(to: Self.signalURL, options: .atomic)
+    }
+
+    // MARK: - Bands, scan mode and temperature
+
+    private static func originalBandsKey(_ trafficKey: String) -> String { "CellDock.originalLTEBands.\(trafficKey)" }
+
+    /// The LTE bands the module allowed before CellDock first changed them.
+    func originalBands(for module: CellularModuleSummary) -> Set<Int>? {
+        UserDefaults.standard.string(forKey: Self.originalBandsKey(Self.trafficKey(for: module)))
+            .flatMap(LTEBandMask.init(hex:))?.bands
+    }
+
+    func loadRadio(for module: CellularModuleSummary) {
+        guard let appState else { return }
+        let moduleID = module.id
+        let key = Self.trafficKey(for: module)
+        appState.runFeatureAT("AT+QCFG=\"band\"", via: moduleID) { [weak self] band in
+            appState.runFeatureAT("AT+QCFG=\"nwscanmode\"", via: moduleID) { [weak self] scan in
+                appState.runFeatureAT("AT+QTEMP", via: moduleID) { [weak self] temperature in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        var state = self.radio[moduleID] ?? ModuleRadioState()
+                        state.bands = ModuleBandConfiguration.parse(band.output)
+                        state.scanMode = ModuleScanMode.parse(scan.output)
+                        state.temperatures = ModuleTemperature.parse(temperature.output)
+                        if let bands = state.bands,
+                           UserDefaults.standard.string(forKey: Self.originalBandsKey(key)) == nil {
+                            UserDefaults.standard.set(bands.lte.hex, forKey: Self.originalBandsKey(key))
+                        }
+                        self.radio[moduleID] = state
+                    }
+                }
+            }
+        }
+    }
+
+    func setLTEBands(_ bands: Set<Int>, for module: CellularModuleSummary) {
+        guard !bands.isEmpty, let current = radio[module.id]?.bands else { return }
+        let command = current.writeCommand(lte: bands)
+        let summary = bands.sorted().map { "B\($0)" }.joined(separator: " ")
+        write(command, for: module, success: L10n.tr("已允许频段：%@。模组会重新搜网。", summary))
+    }
+
+    func setScanMode(_ mode: ModuleScanMode, for module: CellularModuleSummary) {
+        write("AT+QCFG=\"nwscanmode\",\(mode.rawValue),1", for: module,
+              success: L10n.tr("网络制式已设为%@。", mode.localizedTitle))
+    }
+
+    private func write(_ command: String, for module: CellularModuleSummary, success: String) {
+        guard let appState, radio[module.id]?.isBusy != true else { return }
+        let moduleID = module.id
+        radio[moduleID, default: ModuleRadioState()].isBusy = true
+        appState.runFeatureAT(command, via: moduleID) { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                var state = self.radio[moduleID] ?? ModuleRadioState()
+                state.isBusy = false
+                state.message = result.isSuccess ? success : nil
+                state.error = result.isSuccess ? nil : (result.error ?? result.output)
+                self.radio[moduleID] = state
+                self.loadRadio(for: module)
+            }
+        }
     }
 
     private static func dayString(_ date: Date) -> String {
